@@ -1,0 +1,34 @@
+# --- DATA (never commit MIMIC) ---
+data/
+*.csv
+*.tsv
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.sqlite
+*.db
+
+# --- NOTEBOOK JUNK ---
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# --- PYTHON ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+# --- MODELS / OUTPUTS (optional) ---
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.onnx
+
+# --- OS ---
+.DS_Store
+Thumbs.db
