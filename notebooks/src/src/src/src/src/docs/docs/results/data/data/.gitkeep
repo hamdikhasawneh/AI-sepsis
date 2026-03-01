@@ -1,0 +1,17 @@
+# data
+data/
+*.csv
+*.parquet
+*.feather
+
+# notebooks output
+.ipynb_checkpoints/
+
+# python
+__pycache__/
+*.pyc
+.env
+
+# models/results (optional)
+*.pkl
+*.joblib
