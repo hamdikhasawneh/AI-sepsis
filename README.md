@@ -1,2 +1,2 @@
 # AI-sepsis
-Early detection of AI using sepsis
+Early detection of sepsis using AI
