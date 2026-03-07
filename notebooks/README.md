@@ -2,7 +2,7 @@
 
 Keep notebooks modular and task-focused.
 
-Recommended order:
+Order:
 - `01_data_preprocessing.ipynb`
 - `02_feature_engineering.ipynb`
 - `03_model_training.ipynb`
