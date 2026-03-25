@@ -22,6 +22,7 @@ class Patient(Base):
 
     patient_id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String)
+    admission_time = Column(DateTime, default=func.now(), nullable=False)
     status = Column(String)
     assigned_doctor_id = Column(Integer, ForeignKey("users.user_id"))
     created_at = Column(DateTime, default=func.now())
