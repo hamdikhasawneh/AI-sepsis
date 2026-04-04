@@ -2,7 +2,6 @@
 
 A full-stack web application for real-time ICU sepsis early detection, featuring role-based dashboards for doctors, nurses, and administrators.
 
-> **Built for university demonstration purposes.** Includes a mock prediction service designed to be swapped with a real PyTorch LSTM model.
 
 ---
 
