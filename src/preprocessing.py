@@ -859,7 +859,7 @@ def run_preprocessing(
     _save_csv(sepsis_onset, config.output_dir / "sepsis_onset.csv")
     _save_csv(labels_ordered, config.output_dir / "sepsis_labels_multihorizon.csv")
 
-    return {
+        return {
         "cohort": cohort,
         "vitals": vitals,
         "vitals_wide": vitals_wide,
@@ -874,7 +874,9 @@ def run_preprocessing(
         "sepsis_onset": sepsis_onset,
         "labels_ordered": labels_ordered,
     }
-    def load_saved_preprocessing_outputs(output_dir: str):
+
+
+def load_saved_preprocessing_outputs(output_dir: str):
     output_dir = Path(output_dir)
 
     results = {}
