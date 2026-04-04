@@ -875,8 +875,8 @@ def run_preprocessing(
         "labels_ordered": labels_ordered,
     }
 
-def load_saved_preprocessing_outputs(output_dir: str):
-    output_dir = Path(output_dir)
+    def load_saved_preprocessing_outputs(output_dir: str):
+        output_dir = Path(output_dir)
 
     results = {}
 
