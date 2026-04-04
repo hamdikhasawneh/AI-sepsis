@@ -874,3 +874,33 @@ def run_preprocessing(
         "sepsis_onset": sepsis_onset,
         "labels_ordered": labels_ordered,
     }
+    def load_saved_preprocessing_outputs(output_dir: str):
+    output_dir = Path(output_dir)
+
+    results = {}
+
+    file_map = {
+        "cohort": "icu_cohort.csv",
+        "vitals_filtered": "vitals_filtered.csv",
+        "vitals_wide": "vitals_hourly_wide.csv",
+        "vitals_24h": "vitals_24h.csv",
+        "vitals_complete": "vitals_complete.csv",
+        "labs_filtered": "sofa_labs_filtered.csv",
+        "labs_wide": "sofa_labs_hourly_wide.csv",
+        "gcs_filtered": "gcs_filtered.csv",
+        "suspected_infection": "suspected_infection.csv",
+        "labels_ordered": "sepsis_labels_multihorizon.csv",
+    }
+
+    for key, filename in file_map.items():
+        file_path = output_dir / filename
+        if file_path.exists():
+            results[key] = pd.read_csv(file_path)
+        else:
+            results[key] = None
+
+    return results
+
+
+
+
