@@ -42,7 +42,8 @@ Sinha  et al. (2020)  SF/PF ratio equivalence       Chest
 """
 
 # ============================================================
-# 0. Imports & paths
+DATA_DIR   = Path('/content/drive/MyDrive/gp/Cleaned')
+OUTPUT_DIR = Path('/content/drive/MyDrive/mimic_iv_processed')
 # ============================================================
 import zipfile
 from pathlib import Path
