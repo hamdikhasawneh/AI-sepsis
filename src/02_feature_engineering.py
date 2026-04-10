@@ -646,6 +646,7 @@ def build_feature_table(
 def impute_with_medians(
     all_features: pd.DataFrame,
     split_df: pd.DataFrame,
+    cohort: pd.DataFrame,
     feature_cols: list = None,
 ) -> tuple[pd.DataFrame, pd.Series]:
     """
@@ -655,15 +656,20 @@ def impute_with_medians(
     Parameters
     ----------
     all_features  : output of build_feature_table()
-    split_df      : DataFrame with [stay_id, split] where split ∈ {train, val, test}
+    split_df      : DataFrame with [subject_id, split] where split ∈ {train, val, test}
+    cohort        : DataFrame with [stay_id, subject_id] to map subject→stay
     feature_cols  : columns to impute; defaults to all non-stay_id columns
     """
     if feature_cols is None:
         feature_cols = [c for c in all_features.columns if c != 'stay_id']
 
-    train_stay_ids = set(split_df[split_df['split'] == 'train']['stay_id'])
+    # split_df is subject-level — map to stay-level via cohort
+    stay_to_split  = cohort[['stay_id', 'subject_id']].merge(split_df, on='subject_id', how='left')
+    train_stay_ids = set(stay_to_split[stay_to_split['split'] == 'train']['stay_id'])
     train_mask     = all_features['stay_id'].isin(train_stay_ids)
-    medians        = all_features.loc[train_mask, feature_cols].median()
+    print(f'Training stays for median computation: {train_mask.sum():,}')
+
+    medians = all_features.loc[train_mask, feature_cols].median()
 
     all_features[feature_cols] = all_features[feature_cols].fillna(medians)
     print(f'Missing after imputation: {all_features[feature_cols].isnull().sum().sum()}')
