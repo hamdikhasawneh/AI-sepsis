@@ -1,216 +1,190 @@
 """
-02_feature_engineering.py
-=========================
-ICU Early Sepsis Detection System — Feature Engineering Pipeline
-Dataset : MIMIC-IV
-Authors : [Your names]
+feature_engineering.py
+=======================
+Library of all feature-engineering functions extracted from
+02_feature_engineering.ipynb.
 
-Depends on outputs from 01_data_preprocessing.py
-
-Feature groups produced (96 total)
-------------------------------------
-1. Temporal vital sign features  — mean, std, min, max, last, slope per vital
-                                   slope computed on observed values only (49)
-2. SOFA summary features         — max, mean, last, slope, hours >= 2      (5)
-3. Static patient features       — age, gender, admission type one-hot     (11)
-4. Missingness indicators        — missing fraction per vital over 24h      (7)
-5. Lactate and WBC features      — summary stats + clinical threshold flags (21)
-6. Gap features                  — urine output, vasopressor, ventilation,
-                                   blood culture drawn/positive             (9)
-
-Outputs (written to OUTPUT_DIR)
---------------------------------
-engineered_features.csv    — 89,075 stays x 96 features, no labels
-feature_medians.csv        — population medians for inference-time imputation
-X_vitals.npy               — (89,075 x 24 x 7) LSTM input array
-feature_names.txt          — ordered list of 96 feature column names
-
-References
-----------
-Harutyunyan et al. (2019)  MIMIC-III benchmark          Sci Data
-Wang          et al. (2020) MIMIC-Extract                CHIL
-Sendak        et al. (2020) Sepsis Watch                 NPJ Digit Med
-Wong          et al. (2021) EPIC Sepsis Model            NEJM
+Usage in model_training (file 3):
+    from feature_engineering import (
+        compute_temporal_features,
+        compute_sofa_features,
+        compute_static_features,
+        compute_missingness_features,
+        compute_lab_features,
+        build_feature_table,
+        impute_with_medians,
+        load_extra_labs,
+        load_urine_output_features,
+        load_vasopressor_features,
+        load_ventilation_features,
+        load_blood_culture_features,
+    )
 """
-
-# ============================================================
-# 0. Imports & paths
-# ============================================================
-import zipfile
-import warnings
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import zipfile
+from pathlib import Path
 from scipy.stats import linregress
 
-warnings.filterwarnings('ignore')
 
-# ── Change these paths to match your environment ─────────────
-DATA_DIR   = Path('/content/drive/MyDrive/gp/Cleaned')
-OUTPUT_DIR = Path('/content/drive/MyDrive/mimic_iv_processed')
-# ─────────────────────────────────────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
 
 FEATURE_COLS = [
     'abp_dia', 'abp_mean', 'abp_sys',
     'heart_rate', 'resp_rate', 'spo2', 'temp_c'
 ]
 
+EXTRA_LAB_ITEMIDS = [50813, 52442, 51301]   # Lactate (x2), WBC
 
-# ============================================================
-# 1. Load all preprocessed outputs
-# ============================================================
-print("=" * 60)
-print("STEP 1 — Loading preprocessed files")
-print("=" * 60)
-
-cohort = pd.read_csv(OUTPUT_DIR / 'icu_cohort.csv')
-cohort['intime']  = pd.to_datetime(cohort['intime'])
-cohort['outtime'] = pd.to_datetime(cohort['outtime'])
-
-vitals_complete = pd.read_csv(OUTPUT_DIR / 'vitals_complete.csv')
-
-X = np.load(OUTPUT_DIR / 'X_vitals.npy')
-print(f"X shape: {X.shape}")
-
-# Stay order must match X row order
-stay_ids_order = (
-    vitals_complete
-    .sort_values(['stay_id', 'hour'])['stay_id']
-    .drop_duplicates()
-    .tolist()
-)
-print(f"Stays in X: {len(stay_ids_order):,}")
-
-hourly_labels = pd.read_csv(OUTPUT_DIR / 'hourly_labels.csv')
-hourly_labels['abs_time'] = pd.to_datetime(hourly_labels['abs_time'])
-print(f"Hourly labels : {hourly_labels.shape} | "
-      f"positive rate: {hourly_labels['label'].mean():.3%}")
-
-split_df = pd.read_csv(OUTPUT_DIR / 'subject_splits.csv')
-
-print("\nAll files loaded ✓")
-print(f"Cohort   : {cohort['stay_id'].nunique():,} stays | "
-      f"{cohort['subject_id'].nunique():,} patients")
-print(f"Vitals   : {vitals_complete['stay_id'].nunique():,} stays")
-
-
-# ============================================================
-# 2. Lactate and WBC extraction
-# ============================================================
-print("\n" + "=" * 60)
-print("STEP 2 — Lactate and WBC extraction")
-print("=" * 60)
-
-# Lactate — elevated >2 mmol/L signals tissue hypoperfusion (Sepsis-3)
-# WBC     — high/low WBC is a classic SIRS criterion
-EXTRA_LAB_ITEMIDS = [50813, 52442, 51301]   # Lactate x2, WBC
-extra_lab_itemid_to_name = {
+EXTRA_LAB_ITEMID_TO_NAME = {
     50813: 'lactate',
     52442: 'lactate',
     51301: 'wbc',
 }
 
-lab_zip_path = DATA_DIR / 'chartevents_labevents.zip'
-output_file  = OUTPUT_DIR / 'extra_labs_filtered.csv'
+URINE_ITEMIDS = [
+    226559, 226560, 226561, 226584, 226563, 226564,
+    226565, 226567, 226557, 226558, 227488, 227489,
+]
 
-if not output_file.exists():
-    first_chunk = True
-    stay_ids    = set(cohort['stay_id'].dropna().unique())
-    with zipfile.ZipFile(lab_zip_path, 'r') as z:
-        with z.open('Cleaned/labevents.csv') as f:
-            for i, chunk in enumerate(pd.read_csv(
-                f, chunksize=100_000,
-                usecols=['subject_id', 'hadm_id',
-                         'charttime', 'itemid', 'valuenum']
-            )):
-                chunk = chunk[chunk['itemid'].isin(EXTRA_LAB_ITEMIDS)]
-                chunk = chunk.merge(
-                    cohort[['subject_id', 'hadm_id', 'stay_id']],
-                    on=['subject_id', 'hadm_id'], how='inner'
-                )
-                if not chunk.empty:
-                    chunk.to_csv(output_file, mode='a',
-                                 header=first_chunk, index=False)
-                    first_chunk = False
-                print(f'  chunk {i+1}', end='\r')
-    print('\nextra_labs_filtered.csv saved')
-else:
-    print('extra_labs_filtered.csv already exists, skipping extraction')
+VENT_PROC_ITEMIDS = [225792, 225794]   # Invasive / non-invasive ventilation
 
-extra_labs = pd.read_csv(output_file)
-extra_labs['charttime'] = pd.to_datetime(extra_labs['charttime'])
-extra_labs = extra_labs.dropna(subset=['valuenum'])
-extra_labs['lab_name']       = extra_labs['itemid'].map(extra_lab_itemid_to_name)
-extra_labs['charttime_hour'] = extra_labs['charttime'].dt.floor('h')
-
-extra_labs_hourly = (
-    extra_labs
-    .groupby(['stay_id', 'charttime_hour', 'lab_name'])['valuenum']
-    .mean()
-    .reset_index()
-)
-
-extra_labs_wide = extra_labs_hourly.pivot_table(
-    index=['stay_id', 'charttime_hour'],
-    columns='lab_name',
-    values='valuenum'
-).reset_index()
-extra_labs_wide.columns.name = None
-
-# Filter to first 24h of ICU stay
-extra_labs_wide['charttime_hour'] = pd.to_datetime(extra_labs_wide['charttime_hour'])
-extra_labs_wide = extra_labs_wide.merge(
-    cohort[['stay_id', 'intime']], on='stay_id', how='left'
-)
-extra_labs_wide['intime'] = pd.to_datetime(extra_labs_wide['intime'])
-extra_labs_wide['hours_since_admit'] = (
-    (extra_labs_wide['charttime_hour'] - extra_labs_wide['intime'])
-    .dt.total_seconds() / 3600
-)
-
-extra_labs_24h = extra_labs_wide[
-    (extra_labs_wide['hours_since_admit'] >= 0) &
-    (extra_labs_wide['hours_since_admit'] <  24)
-].copy()
-extra_labs_24h['hour'] = extra_labs_24h['hours_since_admit'].astype(int)
-
-print(f"Extra labs 24h shape : {extra_labs_24h.shape}")
-print(f"Stays covered        : {extra_labs_24h['stay_id'].nunique():,}")
-
-# Forward fill within each stay (carry last known value forward)
-extra_labs_24h = extra_labs_24h.sort_values(['stay_id', 'hour'])
-for lab in ['lactate', 'wbc']:
-    if lab in extra_labs_24h.columns:
-        extra_labs_24h[lab] = (
-            extra_labs_24h.groupby('stay_id')[lab]
-            .transform(lambda x: x.ffill())
-        )
-
-print("Remaining NaN after forward fill:")
-cols = [c for c in ['lactate', 'wbc'] if c in extra_labs_24h.columns]
-print(extra_labs_24h[cols].isnull().sum())
+LEAKAGE_COLS = [
+    'y_6h', 'y_12h', 'y_24h',
+    'eligible_6h', 'eligible_12h', 'eligible_24h',
+    'icu_los_hours',
+]
 
 
-# ============================================================
-# 3. Feature computation functions
-# ============================================================
+# ── Section 1: Load extra labs (Lactate + WBC) ───────────────────────────────
+
+def load_extra_labs(
+    lab_zip_path: Path,
+    cohort: pd.DataFrame,
+    output_file: Path,
+    chunk_size: int = 100_000,
+    force: bool = False,
+) -> pd.DataFrame:
+    """
+    Extract lactate and WBC from labevents.csv (inside zip) for cohort stays.
+    Saves result to output_file and returns the cleaned wide-format DataFrame
+    filtered to the first 24 hours of each ICU stay.
+
+    Parameters
+    ----------
+    lab_zip_path : Path to chartevents_labevents.zip
+    cohort       : DataFrame with columns [subject_id, hadm_id, stay_id, intime]
+    output_file  : Path to save/load extra_labs_filtered.csv
+    chunk_size   : Rows per chunk when reading labevents
+    force        : If True, re-extract even if output_file already exists
+    """
+    if force or not output_file.exists():
+        if output_file.exists():
+            output_file.unlink()
+
+        stay_ids = set(cohort['stay_id'].dropna().unique())
+        first_chunk = True
+
+        with zipfile.ZipFile(lab_zip_path, 'r') as z:
+            with z.open('Cleaned/labevents.csv') as f:
+                for i, chunk in enumerate(
+                    pd.read_csv(
+                        f,
+                        chunksize=chunk_size,
+                        usecols=['subject_id', 'hadm_id', 'charttime', 'itemid', 'valuenum']
+                    )
+                ):
+                    chunk = chunk[chunk['itemid'].isin(EXTRA_LAB_ITEMIDS)]
+                    chunk = chunk.merge(
+                        cohort[['subject_id', 'hadm_id', 'stay_id']],
+                        on=['subject_id', 'hadm_id'],
+                        how='inner'
+                    )
+                    if not chunk.empty:
+                        chunk.to_csv(output_file, mode='a', header=first_chunk, index=False)
+                        first_chunk = False
+                    print(f'  chunk {i + 1} done', end='\r')
+        print(f'\nextra_labs_filtered.csv saved → {output_file}')
+
+    extra_labs = pd.read_csv(output_file)
+    extra_labs['charttime'] = pd.to_datetime(extra_labs['charttime'])
+
+    # Drop nulls and map item IDs to names
+    extra_labs = extra_labs.dropna(subset=['valuenum'])
+    extra_labs['lab_name'] = extra_labs['itemid'].map(EXTRA_LAB_ITEMID_TO_NAME)
+
+    # Floor to hourly bins and aggregate
+    extra_labs['charttime_hour'] = extra_labs['charttime'].dt.floor('h')
+    extra_labs_hourly = (
+        extra_labs
+        .groupby(['stay_id', 'charttime_hour', 'lab_name'])['valuenum']
+        .mean()
+        .reset_index()
+    )
+
+    # Pivot wide
+    extra_labs_wide = extra_labs_hourly.pivot_table(
+        index=['stay_id', 'charttime_hour'],
+        columns='lab_name',
+        values='valuenum'
+    ).reset_index()
+    extra_labs_wide.columns.name = None
+
+    # Merge intime and compute hours since admit
+    extra_labs_wide['charttime_hour'] = pd.to_datetime(extra_labs_wide['charttime_hour'])
+    extra_labs_wide = extra_labs_wide.merge(
+        cohort[['stay_id', 'intime']], on='stay_id', how='left'
+    )
+    extra_labs_wide['intime'] = pd.to_datetime(extra_labs_wide['intime'])
+    extra_labs_wide['hours_since_admit'] = (
+        (extra_labs_wide['charttime_hour'] - extra_labs_wide['intime'])
+        .dt.total_seconds() / 3600
+    )
+
+    # Filter to first 24 h
+    extra_labs_24h = extra_labs_wide[
+        (extra_labs_wide['hours_since_admit'] >= 0) &
+        (extra_labs_wide['hours_since_admit'] < 24)
+    ].copy()
+    extra_labs_24h['hour'] = extra_labs_24h['hours_since_admit'].astype(int)
+
+    # Forward-fill within each stay
+    extra_labs_24h = extra_labs_24h.sort_values(['stay_id', 'hour'])
+    for lab in ['lactate', 'wbc']:
+        if lab in extra_labs_24h.columns:
+            extra_labs_24h[lab] = (
+                extra_labs_24h.groupby('stay_id')[lab]
+                .transform(lambda x: x.ffill())
+            )
+
+    print(f'Extra labs 24h shape: {extra_labs_24h.shape} | '
+          f'stays: {extra_labs_24h["stay_id"].nunique():,}')
+    return extra_labs_24h
+
+
+# ── Section 2: Temporal vital-sign features ──────────────────────────────────
 
 def compute_temporal_features(
     vitals_complete: pd.DataFrame,
-    feature_cols: list
+    feature_cols: list = FEATURE_COLS,
 ) -> pd.DataFrame:
     """
-    Per-stay summary statistics and trends over the first 24h.
+    Per-stay summary statistics and linear trends over the first 24 h.
 
-    Slope is computed only on observed (pre-imputation) rows.
-    If observed_{col} flag columns are absent, falls back to
-    all non-NaN rows — still safer than slope over a filled grid.
+    Slope is computed ONLY on rows where the sensor actually recorded a
+    value (uses 'observed_{col}' boolean column if present; falls back to
+    all non-NaN rows).
+
+    Parameters
+    ----------
+    vitals_complete : hourly vitals DataFrame with columns [stay_id, hour, *feature_cols]
+    feature_cols    : list of vital-sign column names
     """
     records = []
     for stay_id, group in vitals_complete.groupby('stay_id'):
         group = group.sort_values('hour')
-        row   = {'stay_id': stay_id}
+        row = {'stay_id': stay_id}
         hours = group['hour'].values.astype(float)
 
         for col in feature_cols:
@@ -219,11 +193,8 @@ def compute_temporal_features(
             row[f'{col}_std']  = np.nanstd(vals)
             row[f'{col}_min']  = np.nanmin(vals)
             row[f'{col}_max']  = np.nanmax(vals)
-            row[f'{col}_last'] = (
-                vals[-1] if not np.isnan(vals[-1]) else np.nanmean(vals)
-            )
+            row[f'{col}_last'] = vals[-1] if not np.isnan(vals[-1]) else np.nanmean(vals)
 
-            # Slope: observed rows only
             obs_flag = f'observed_{col}'
             if obs_flag in group.columns:
                 obs_mask = group[obs_flag].values == 1
@@ -243,56 +214,63 @@ def compute_temporal_features(
     return pd.DataFrame(records)
 
 
+# ── Section 3: SOFA summary features ─────────────────────────────────────────
+
+def _score_platelets(x):
+    if pd.isna(x): return np.nan
+    if x >= 150:   return 0
+    if x >= 100:   return 1
+    if x >= 50:    return 2
+    if x >= 20:    return 3
+    return 4
+
+def _score_bilirubin(x):
+    if pd.isna(x): return np.nan
+    if x < 1.2:    return 0
+    if x < 2.0:    return 1
+    if x < 6.0:    return 2
+    if x < 12.0:   return 3
+    return 4
+
+def _score_creatinine(x):
+    if pd.isna(x): return np.nan
+    if x < 1.2:    return 0
+    if x < 2.0:    return 1
+    if x < 3.5:    return 2
+    if x < 5.0:    return 3
+    return 4
+
+
 def compute_sofa_features(
     sofa_labs: pd.DataFrame,
-    cohort: pd.DataFrame
+    cohort: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Per-stay SOFA lab summary over the first 24h.
-    Recomputes individual scores from raw lab values so the function
-    is self-contained and does not depend on in-memory preprocessing state.
+    Compute SOFA lab sub-scores (platelets, bilirubin, creatinine) and
+    return per-stay summary statistics over the first 24 h.
+
+    Parameters
+    ----------
+    sofa_labs : DataFrame from sofa_labs_hourly_wide.csv with
+                columns [stay_id, charttime_hour, platelets, bilirubin, creatinine]
+    cohort    : DataFrame with [stay_id, intime]
     """
-    def score_platelets(x):
-        if pd.isna(x): return np.nan
-        if x >= 150:   return 0
-        if x >= 100:   return 1
-        if x >= 50:    return 2
-        if x >= 20:    return 3
-        return 4
-
-    def score_bilirubin(x):
-        if pd.isna(x): return np.nan
-        if x < 1.2:    return 0
-        if x < 2.0:    return 1
-        if x < 6.0:    return 2
-        if x < 12.0:   return 3
-        return 4
-
-    def score_creatinine(x):
-        if pd.isna(x): return np.nan
-        if x < 1.2:    return 0
-        if x < 2.0:    return 1
-        if x < 3.5:    return 2
-        if x < 5.0:    return 3
-        return 4
-
-    sofa = sofa_labs.merge(
-        cohort[['stay_id', 'intime']], on='stay_id', how='left'
-    )
+    sofa = sofa_labs.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
     sofa['intime']         = pd.to_datetime(sofa['intime'])
     sofa['charttime_hour'] = pd.to_datetime(sofa['charttime_hour'])
     sofa['hours_since_admit'] = (
         (sofa['charttime_hour'] - sofa['intime']).dt.total_seconds() / 3600
     )
+
     sofa_24h = sofa[
         (sofa['hours_since_admit'] >= 0) &
-        (sofa['hours_since_admit'] <  24)
+        (sofa['hours_since_admit'] < 24)
     ].copy()
     sofa_24h['hour'] = sofa_24h['hours_since_admit'].astype(int)
 
-    sofa_24h['sofa_platelets']  = sofa_24h['platelets'].apply(score_platelets)
-    sofa_24h['sofa_bilirubin']  = sofa_24h['bilirubin'].apply(score_bilirubin)
-    sofa_24h['sofa_creatinine'] = sofa_24h['creatinine'].apply(score_creatinine)
+    sofa_24h['sofa_platelets']  = sofa_24h['platelets'].apply(_score_platelets)
+    sofa_24h['sofa_bilirubin']  = sofa_24h['bilirubin'].apply(_score_bilirubin)
+    sofa_24h['sofa_creatinine'] = sofa_24h['creatinine'].apply(_score_creatinine)
     sofa_24h['sofa_lab_total']  = sofa_24h[
         ['sofa_platelets', 'sofa_bilirubin', 'sofa_creatinine']
     ].sum(axis=1, min_count=1)
@@ -301,34 +279,39 @@ def compute_sofa_features(
     for stay_id, group in sofa_24h.groupby('stay_id'):
         group = group.sort_values('hour')
         vals  = group['sofa_lab_total'].values.astype(float)
-        h     = group['hour'].values
-        mask  = ~np.isnan(vals)
+        h     = group['hour'].values.astype(float)
+        obs   = ~np.isnan(vals)
 
-        slope = np.nan
-        if mask.sum() >= 2:
-            slope, *_ = linregress(h[mask], vals[mask])
+        row = {
+            'stay_id':          stay_id,
+            'sofa_mean_24h':    np.nanmean(vals),
+            'sofa_max_24h':     np.nanmax(vals),
+            'sofa_last_24h':    vals[obs][-1] if obs.any() else np.nan,
+        }
 
-        records.append({
-            'stay_id':        stay_id,
-            'sofa_max_24h':   np.nanmax(vals)  if mask.any() else np.nan,
-            'sofa_mean_24h':  np.nanmean(vals) if mask.any() else np.nan,
-            'sofa_last_24h':  vals[-1] if not np.isnan(vals[-1])
-                              else np.nanmean(vals),
-            'sofa_slope_24h': slope,
-            'sofa_hours_ge2': int((vals >= 2).sum()),
-        })
+        if obs.sum() >= 2:
+            slope, *_ = linregress(h[obs], vals[obs])
+            row['sofa_slope_24h'] = slope
+        else:
+            row['sofa_slope_24h'] = np.nan
 
+        records.append(row)
     return pd.DataFrame(records)
 
 
+# ── Section 4: Static patient features ───────────────────────────────────────
+
 def compute_static_features(cohort: pd.DataFrame) -> pd.DataFrame:
     """
-    Build static features from cohort demographics.
-    icu_los_hours excluded — not knowable at prediction time (future leakage).
+    Build static demographic features from the cohort table.
+    icu_los_hours is excluded to prevent future leakage.
+
+    Parameters
+    ----------
+    cohort : DataFrame with [stay_id, anchor_age, gender, admission_type]
     """
     static = cohort[[
-        'stay_id', 'anchor_age', 'gender',
-        'admission_type', 'admission_location',
+        'stay_id', 'anchor_age', 'gender', 'admission_type',
     ]].copy()
 
     static['gender_male'] = (static['gender'].str.upper() == 'M').astype(int)
@@ -338,20 +321,24 @@ def compute_static_features(cohort: pd.DataFrame) -> pd.DataFrame:
         prefix='adm_type'
     ).astype(int)
     static = pd.concat([static, admission_dummies], axis=1)
-    static = static.drop(
-        columns=['gender', 'admission_type', 'admission_location']
-    )
+
+    static = static.drop(columns=['gender', 'admission_type'])
     return static
 
 
+# ── Section 5: Missingness indicators ────────────────────────────────────────
+
 def compute_missingness_features(
     vitals_complete: pd.DataFrame,
-    feature_cols: list
+    feature_cols: list = FEATURE_COLS,
 ) -> pd.DataFrame:
     """
-    Missing fraction per vital sign over the 24h grid.
-    Missingness is itself a clinical signal — a missing ABP may indicate
-    the patient did not have an arterial line.
+    Fraction of hours with missing readings for each vital sign.
+
+    Parameters
+    ----------
+    vitals_complete : hourly vitals DataFrame with [stay_id, *feature_cols]
+    feature_cols    : list of vital-sign column names
     """
     records = []
     for stay_id, group in vitals_complete.groupby('stay_id'):
@@ -362,18 +349,30 @@ def compute_missingness_features(
     return pd.DataFrame(records)
 
 
+# ── Section 6: Lab features (Lactate + WBC) ──────────────────────────────────
+
 def compute_lab_features(extra_labs_24h: pd.DataFrame) -> pd.DataFrame:
     """
-    Per-stay summary statistics for lactate and WBC over first 24h.
-    Slope computed only on observed (non-imputed) rows.
-    Clinical threshold flags align with Sepsis-3 and SIRS criteria.
+    Per-stay summary statistics for lactate and WBC over the first 24 h.
+    Slope is computed only on observed (non-imputed) values.
+    Clinical threshold flags are added for lactate and WBC.
+
+    Parameters
+    ----------
+    extra_labs_24h : forward-filled lab DataFrame from load_extra_labs()
+                     with columns [stay_id, hour, lactate, wbc]
     """
     records = []
-
     for stay_id, group in extra_labs_24h.groupby('stay_id'):
         row = {'stay_id': stay_id}
 
         for lab in ['lactate', 'wbc']:
+            if lab not in group.columns:
+                for suffix in ['mean', 'max', 'min', 'first', 'last', 'count', 'missing', 'slope']:
+                    row[f'{lab}_{suffix}'] = np.nan if suffix != 'count' else 0
+                row[f'{lab}_missing'] = 1
+                continue
+
             vals = group[lab].dropna().values
 
             if len(vals) == 0:
@@ -404,395 +403,275 @@ def compute_lab_features(extra_labs_24h: pd.DataFrame) -> pd.DataFrame:
                 else:
                     row[f'{lab}_slope'] = np.nan
 
-        # Clinical threshold flags
-        lactate_vals = group['lactate'].dropna().values
-        wbc_vals     = group['wbc'].dropna().values
+        # Clinical threshold flags (computed on observed values)
+        lactate_vals = group['lactate'].dropna().values if 'lactate' in group.columns else np.array([])
+        wbc_vals     = group['wbc'].dropna().values     if 'wbc'     in group.columns else np.array([])
 
-        # Lactate >2 mmol/L = tissue hypoperfusion (Sepsis-3)
-        # Lactate >4 mmol/L = septic shock range
         row['lactate_elevated'] = int(any(lactate_vals > 2.0))
         row['lactate_critical'] = int(any(lactate_vals > 4.0))
-
-        # WBC >12 = leukocytosis, <4 = leukopenia (SIRS criteria)
-        row['wbc_high']     = int(any(wbc_vals > 12.0))
-        row['wbc_low']      = int(any(wbc_vals < 4.0))
-        row['wbc_abnormal'] = int(
-            any(wbc_vals > 12.0) or any(wbc_vals < 4.0)
-        )
+        row['wbc_high']         = int(any(wbc_vals > 12.0))
+        row['wbc_low']          = int(any(wbc_vals < 4.0))
 
         records.append(row)
-
     return pd.DataFrame(records)
 
 
-# ============================================================
-# 4. Run all feature computations
-# ============================================================
-print("\n" + "=" * 60)
-print("STEP 4 — Computing features")
-print("=" * 60)
+# ── Section 7: Gap features ───────────────────────────────────────────────────
 
-# ── 4a. Temporal vital features ──────────────────────────────
-print("Computing temporal features (may take a few minutes)...")
-temporal_features = compute_temporal_features(vitals_complete, FEATURE_COLS)
-print(f"Temporal features shape : {temporal_features.shape}")
+def load_urine_output_features(
+    data_dir: Path,
+    cohort: pd.DataFrame,
+    output_file: Path,
+    force: bool = False,
+) -> pd.DataFrame:
+    """
+    Extract and summarise urine output over the first 24 h.
+    Returns a per-stay DataFrame with UO summary columns.
+    """
+    if force or not output_file.exists():
+        stay_ids    = set(cohort['stay_id'].dropna().unique())
+        first_chunk = True
+        with open(data_dir / 'outputevents.csv') as f:
+            for i, chunk in enumerate(pd.read_csv(
+                f, chunksize=100_000,
+                usecols=['stay_id', 'charttime', 'itemid', 'value']
+            )):
+                chunk = chunk[
+                    chunk['stay_id'].isin(stay_ids) &
+                    chunk['itemid'].isin(URINE_ITEMIDS)
+                ]
+                if not chunk.empty:
+                    chunk.to_csv(output_file, mode='a', header=first_chunk, index=False)
+                    first_chunk = False
+            print(f'UO chunk {i + 1}', end='\r')
+        print(f'\nurine_output_filtered.csv saved → {output_file}')
 
-# ── 4b. SOFA summary features ────────────────────────────────
-sofa_labs = pd.read_csv(OUTPUT_DIR / 'sofa_labs_hourly_wide.csv')
-sofa_labs['charttime_hour'] = pd.to_datetime(sofa_labs['charttime_hour'])
-
-print("Computing SOFA features...")
-sofa_features = compute_sofa_features(sofa_labs, cohort)
-print(f"SOFA features shape     : {sofa_features.shape}")
-
-# ── 4c. Static patient features ──────────────────────────────
-static_features = compute_static_features(cohort)
-print(f"Static features shape   : {static_features.shape}")
-
-# ── 4d. Missingness indicators ───────────────────────────────
-print("Computing missingness features...")
-missingness_features = compute_missingness_features(vitals_complete, FEATURE_COLS)
-print(f"Missingness shape       : {missingness_features.shape}")
-
-# ── 4e. Lactate and WBC features ─────────────────────────────
-print("Computing lab features...")
-lab_features = compute_lab_features(extra_labs_24h)
-print(f"Lab features shape      : {lab_features.shape}")
-
-
-# ============================================================
-# 5. Combine all features
-# ============================================================
-print("\n" + "=" * 60)
-print("STEP 5 — Combining features")
-print("=" * 60)
-
-all_features = (
-    pd.DataFrame({'stay_id': stay_ids_order})
-    .merge(temporal_features,    on='stay_id', how='left')
-    .merge(sofa_features,        on='stay_id', how='left')
-    .merge(static_features,      on='stay_id', how='left')
-    .merge(missingness_features, on='stay_id', how='left')
-    .merge(lab_features,         on='stay_id', how='left')
-)
-
-print(f"Combined shape          : {all_features.shape}")
-print(f"Missing values (top 10):")
-print(all_features.isnull().sum().sort_values(ascending=False).head(10))
-
-# Population median fill — remaining NaN after forward fill
-feature_cols_all = [c for c in all_features.columns if c != 'stay_id']
-medians = all_features[feature_cols_all].median()
-all_features[feature_cols_all] = all_features[feature_cols_all].fillna(medians)
-print(f"\nMissing after median fill: {all_features.isnull().sum().sum()}")
-
-
-# ============================================================
-# 6. Gap features (urine output, vasopressor,
-#                  ventilation, blood culture)
-# ============================================================
-print("\n" + "=" * 60)
-print("STEP 6 — Gap features")
-print("=" * 60)
-
-stay_ids = set(cohort['stay_id'].dropna().unique())
-
-# ── 6a. Urine output ─────────────────────────────────────────
-uo_output = OUTPUT_DIR / 'urine_output_filtered.csv'
-URINE_ITEMIDS = [
-    226559, 226560, 226561, 226584, 226563, 226564, 226565, 226567,
-    226557, 226558, 227488, 227489,
-]
-
-if not uo_output.exists():
-    first_chunk = True
-    with open(DATA_DIR / 'outputevents.csv') as f:
-        for i, chunk in enumerate(pd.read_csv(
-            f, chunksize=100_000,
-            usecols=['stay_id', 'charttime', 'itemid', 'value']
-        )):
-            chunk = chunk[
-                chunk['stay_id'].isin(stay_ids) &
-                chunk['itemid'].isin(URINE_ITEMIDS)
-            ]
-            if not chunk.empty:
-                chunk.to_csv(uo_output, mode='a',
-                             header=first_chunk, index=False)
-                first_chunk = False
-        print(f'  UO chunk {i+1}', end='\r')
-    print('\nurine_output_filtered.csv saved')
-else:
-    print('urine_output_filtered.csv already exists, skipping')
-
-uo_df = pd.read_csv(uo_output)
-uo_df['charttime'] = pd.to_datetime(uo_df['charttime'])
-uo_df = uo_df.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
-uo_df['intime'] = pd.to_datetime(uo_df['intime'])
-uo_df['hours_since_admit'] = (
-    (uo_df['charttime'] - uo_df['intime']).dt.total_seconds() / 3600
-)
-uo_24h = uo_df[
-    (uo_df['hours_since_admit'] >= 0) &
-    (uo_df['hours_since_admit'] <  24)
-].copy()
-uo_24h['value'] = pd.to_numeric(uo_24h['value'], errors='coerce')
-
-# Clip physiologically impossible values
-# Negative UO = data correction entries in MIMIC
-# Max realistic 24h UO ~10,000 mL even with aggressive diuresis
-uo_24h['value'] = uo_24h['value'].clip(lower=0, upper=10000)
-
-uo_features = (
-    uo_24h.groupby('stay_id')['value']
-    .agg(
-        uo_total_24h='sum',
-        uo_mean_hourly=lambda x: x.sum() / 24,
-        uo_min_hourly='min',
-        uo_count='count'
+    uo_df = pd.read_csv(output_file)
+    uo_df['charttime'] = pd.to_datetime(uo_df['charttime'])
+    uo_df = uo_df.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
+    uo_df['intime'] = pd.to_datetime(uo_df['intime'])
+    uo_df['hours_since_admit'] = (
+        (uo_df['charttime'] - uo_df['intime']).dt.total_seconds() / 3600
     )
-    .reset_index()
-)
-# Oliguria = total UO < 500 mL in 24h (clinical threshold)
-uo_features['oliguria_flag'] = (
-    uo_features['uo_total_24h'] < 500
-).astype(int)
-print(f"UO features shape       : {uo_features.shape}")
 
-# ── 6b. Vasopressor flag ─────────────────────────────────────
-# vasopressors_filtered.csv already extracted in preprocessing
-vaso_path = OUTPUT_DIR / 'vasopressors_filtered.csv'
+    uo_24h = uo_df[
+        (uo_df['hours_since_admit'] >= 0) &
+        (uo_df['hours_since_admit'] < 24)
+    ].copy()
+    uo_24h['value'] = pd.to_numeric(uo_24h['value'], errors='coerce').clip(lower=0, upper=10_000)
 
-if vaso_path.exists():
+    uo_features = (
+        uo_24h.groupby('stay_id')['value']
+        .agg(
+            uo_total_24h='sum',
+            uo_mean_hourly=lambda x: x.sum() / 24,
+            uo_min_hourly='min',
+            uo_count='count',
+        )
+        .reset_index()
+    )
+    uo_features['oliguria_flag'] = (uo_features['uo_mean_hourly'] < 0.5).astype(int)
+    return uo_features
+
+
+def load_vasopressor_features(
+    output_dir: Path,
+    cohort: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Load vasopressor binary flag from vasopressors_filtered.csv (if present).
+    Returns a per-stay DataFrame with [stay_id, vaso_events_24h, vasopressor_flag].
+    """
+    vaso_path = output_dir / 'vasopressors_filtered.csv'
+    if not vaso_path.exists():
+        print('WARNING: vasopressors_filtered.csv not found — flag will be all zeros')
+        return pd.DataFrame({'stay_id': cohort['stay_id'], 'vasopressor_flag': 0})
+
     vaso_df = pd.read_csv(vaso_path)
-    vaso_df['starttime']      = pd.to_datetime(vaso_df['starttime'])
-    vaso_df['charttime_hour'] = vaso_df['starttime'].dt.floor('h')
-    vaso_df = vaso_df.merge(
-        cohort[['stay_id', 'intime']], on='stay_id', how='left'
-    )
+    vaso_df['starttime'] = pd.to_datetime(vaso_df['starttime'])
+    vaso_df = vaso_df.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
     vaso_df['intime'] = pd.to_datetime(vaso_df['intime'])
     vaso_df['hours_since_admit'] = (
-        (vaso_df['charttime_hour'] - vaso_df['intime'])
-        .dt.total_seconds() / 3600
+        (vaso_df['starttime'] - vaso_df['intime']).dt.total_seconds() / 3600
     )
     vaso_24h = vaso_df[
         (vaso_df['hours_since_admit'] >= 0) &
-        (vaso_df['hours_since_admit'] <  24)
-    ].copy()
+        (vaso_df['hours_since_admit'] < 24)
+    ]
     vaso_features = (
-        vaso_24h.groupby('stay_id')
-        .size()
+        vaso_24h.groupby('stay_id').size()
         .reset_index(name='vaso_events_24h')
     )
     vaso_features['vasopressor_flag'] = 1
-    print(f"Vasopressor features    : {vaso_features.shape}")
-else:
-    print('WARNING: vasopressors_filtered.csv not found')
-    vaso_features = pd.DataFrame(
-        columns=['stay_id', 'vaso_events_24h', 'vasopressor_flag']
-    )
-
-# ── 6c. Ventilation status ───────────────────────────────────
-vent_path      = DATA_DIR / 'ventilation.csv'
-vent_proc_path = DATA_DIR / 'procedureevents.csv'
-VENT_PROC_ITEMIDS = [225792, 225794]
-
-if vent_path.exists():
-    vent_raw = pd.read_csv(
-        vent_path,
-        usecols=['stay_id', 'starttime', 'ventilation_status']
-    )
-    vent_raw['starttime'] = pd.to_datetime(vent_raw['starttime'])
-    vent_raw = vent_raw.merge(
-        cohort[['stay_id', 'intime']], on='stay_id', how='left'
-    )
-    vent_raw['intime'] = pd.to_datetime(vent_raw['intime'])
-    vent_raw['hours_since_admit'] = (
-        (vent_raw['starttime'] - vent_raw['intime'])
-        .dt.total_seconds() / 3600
-    )
-    vent_24h = vent_raw[
-        (vent_raw['hours_since_admit'] >= 0) &
-        (vent_raw['hours_since_admit'] <  24) &
-        (vent_raw['ventilation_status'] == 'InvasiveVent')
-    ]
-    print('Ventilation loaded from ventilation.csv')
-
-elif vent_proc_path.exists():
-    vent_raw = pd.read_csv(
-        vent_proc_path,
-        usecols=['stay_id', 'starttime', 'itemid']
-    )
-    vent_raw = vent_raw[vent_raw['itemid'].isin(VENT_PROC_ITEMIDS)]
-    vent_raw['starttime'] = pd.to_datetime(vent_raw['starttime'])
-    vent_raw = vent_raw.merge(
-        cohort[['stay_id', 'intime']], on='stay_id', how='left'
-    )
-    vent_raw['intime'] = pd.to_datetime(vent_raw['intime'])
-    vent_raw['hours_since_admit'] = (
-        (vent_raw['starttime'] - vent_raw['intime'])
-        .dt.total_seconds() / 3600
-    )
-    vent_24h = vent_raw[
-        (vent_raw['hours_since_admit'] >= 0) &
-        (vent_raw['hours_since_admit'] <  24)
-    ]
-    print('Ventilation loaded from procedureevents.csv')
-
-else:
-    print('WARNING: No ventilation source found — flag set to 0')
-    vent_24h = pd.DataFrame(columns=['stay_id'])
-
-ventilated_stays = (
-    set(vent_24h['stay_id'].unique()) if len(vent_24h) > 0 else set()
-)
-vent_features = cohort[['stay_id']].copy()
-vent_features['ventilated_flag'] = (
-    vent_features['stay_id'].isin(ventilated_stays).astype(int)
-)
-print(f"Ventilated in first 24h : {vent_features['ventilated_flag'].sum():,}")
-
-# ── 6d. Blood culture flags ──────────────────────────────────
-micro = pd.read_csv(DATA_DIR / 'microbiologyevents.csv', low_memory=False)
-micro['charttime'] = pd.to_datetime(micro['charttime'], errors='coerce')
-micro['chartdate'] = pd.to_datetime(micro['chartdate'], errors='coerce')
-micro['culture_time'] = micro['charttime'].combine_first(micro['chartdate'])
-
-cohort_keys = cohort[
-    ['subject_id', 'hadm_id', 'stay_id', 'intime']
-].drop_duplicates()
-micro = micro.merge(cohort_keys, on=['subject_id', 'hadm_id'], how='inner')
-micro['intime'] = pd.to_datetime(micro['intime'])
-micro['hours_since_admit'] = (
-    (micro['culture_time'] - micro['intime']).dt.total_seconds() / 3600
-)
-
-blood_cultures = micro[
-    (micro['spec_type_desc'].str.contains('BLOOD', case=False, na=False)) &
-    (micro['hours_since_admit'] >= 0) &
-    (micro['hours_since_admit'] <  24)
-].copy()
-
-culture_drawn = (
-    blood_cultures.groupby('stay_id')
-    .size()
-    .reset_index(name='culture_count')
-)
-culture_drawn['blood_culture_drawn'] = 1
-
-culture_positive = blood_cultures[
-    blood_cultures['org_name'].notna() &
-    (blood_cultures['org_name'].str.strip() != '')
-][['stay_id']].drop_duplicates()
-culture_positive['blood_culture_positive'] = 1
-
-blood_culture_features = culture_drawn[
-    ['stay_id', 'blood_culture_drawn']
-].merge(culture_positive, on='stay_id', how='left')
-blood_culture_features['blood_culture_positive'] = (
-    blood_culture_features['blood_culture_positive'].fillna(0).astype(int)
-)
-print(f"Blood cultures drawn    : "
-      f"{blood_culture_features['blood_culture_drawn'].sum():,}")
-print(f"Blood cultures positive : "
-      f"{blood_culture_features['blood_culture_positive'].sum():,}")
-
-# ── 6e. Merge all gap features into all_features ─────────────
-all_features = all_features.merge(
-    uo_features, on='stay_id', how='left'
-).merge(
-    vaso_features[['stay_id', 'vaso_events_24h', 'vasopressor_flag']],
-    on='stay_id', how='left'
-).merge(
-    vent_features, on='stay_id', how='left'
-).merge(
-    blood_culture_features, on='stay_id', how='left'
-)
-
-# Fill binary flags with 0 for stays with no recorded event
-for col in ['vasopressor_flag', 'blood_culture_drawn',
-            'blood_culture_positive', 'vaso_events_24h']:
-    if col in all_features.columns:
-        all_features[col] = all_features[col].fillna(0).astype(int)
-
-print(f"\nall_features after gap features : {all_features.shape}")
+    return vaso_features
 
 
-# ============================================================
-# 7. Final median fill + save
-# ============================================================
-print("\n" + "=" * 60)
-print("STEP 7 — Final median fill and save")
-print("=" * 60)
+def load_ventilation_features(
+    data_dir: Path,
+    cohort: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Extract ventilation status over the first 24 h.
+    Tries ventilation.csv first, falls back to procedureevents.csv.
+    Returns a per-stay DataFrame with [stay_id, ventilated_flag].
+    """
+    vent_path      = data_dir / 'ventilation.csv'
+    vent_proc_path = data_dir / 'procedureevents.csv'
 
-new_gap_cols = [
-    'uo_total_24h', 'uo_mean_hourly', 'uo_min_hourly', 'uo_count',
-    'oliguria_flag', 'vaso_events_24h', 'vasopressor_flag',
-    'ventilated_flag', 'blood_culture_drawn', 'blood_culture_positive'
-]
-new_gap_cols_present = [c for c in new_gap_cols if c in all_features.columns]
-gap_medians = all_features[new_gap_cols_present].median()
-all_features[new_gap_cols_present] = (
-    all_features[new_gap_cols_present].fillna(gap_medians)
-)
+    if vent_path.exists():
+        vent_raw = pd.read_csv(vent_path, usecols=['stay_id', 'starttime', 'ventilation_status'])
+        vent_raw['starttime'] = pd.to_datetime(vent_raw['starttime'])
+        vent_raw = vent_raw.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
+        vent_raw['intime'] = pd.to_datetime(vent_raw['intime'])
+        vent_raw['hours_since_admit'] = (
+            (vent_raw['starttime'] - vent_raw['intime']).dt.total_seconds() / 3600
+        )
+        vent_24h = vent_raw[
+            (vent_raw['hours_since_admit'] >= 0) &
+            (vent_raw['hours_since_admit'] < 24) &
+            (vent_raw['ventilation_status'] == 'InvasiveVent')
+        ]
+        print('Ventilation loaded from ventilation.csv')
 
-# Save all outputs
-all_features.to_csv(OUTPUT_DIR / 'engineered_features.csv', index=False)
-print(f"Saved engineered_features.csv — shape: {all_features.shape}")
+    elif vent_proc_path.exists():
+        vent_raw = pd.read_csv(vent_proc_path, usecols=['stay_id', 'starttime', 'itemid'])
+        vent_raw = vent_raw[vent_raw['itemid'].isin(VENT_PROC_ITEMIDS)]
+        vent_raw['starttime'] = pd.to_datetime(vent_raw['starttime'])
+        vent_raw = vent_raw.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
+        vent_raw['intime'] = pd.to_datetime(vent_raw['intime'])
+        vent_raw['hours_since_admit'] = (
+            (vent_raw['starttime'] - vent_raw['intime']).dt.total_seconds() / 3600
+        )
+        vent_24h = vent_raw[
+            (vent_raw['hours_since_admit'] >= 0) &
+            (vent_raw['hours_since_admit'] < 24)
+        ]
+        print('Ventilation loaded from procedureevents.csv')
 
-medians.to_csv(OUTPUT_DIR / 'feature_medians.csv', header=True)
-print("Saved feature_medians.csv")
-
-np.save(OUTPUT_DIR / 'X_vitals.npy', X)
-print(f"Saved X_vitals.npy — shape: {X.shape}")
-
-feature_cols_all = [c for c in all_features.columns if c != 'stay_id']
-with open(OUTPUT_DIR / 'feature_names.txt', 'w') as f:
-    f.write('\n'.join(feature_cols_all))
-print(f"Saved feature_names.txt — {len(feature_cols_all)} features")
-
-# Leakage check
-leaked = [c for c in all_features.columns
-          if c in ['y_6h', 'y_12h', 'y_24h',
-                   'eligible_6h', 'eligible_12h', 'eligible_24h',
-                   'icu_los_hours']]
-assert len(leaked) == 0, f'LEAKAGE: {leaked}'
-print("Leakage check passed ✓")
-
-
-# ============================================================
-# 8. Final verification
-# ============================================================
-print("\n" + "=" * 60)
-print("FEATURE ENGINEERING COMPLETE")
-print("=" * 60)
-print(f"Shape              : {all_features.shape}")
-print(f"Total features     : {all_features.shape[1] - 1}")
-print(f"Missing values     : {all_features.isnull().sum().sum()}")
-print(f"Unique stays       : {all_features['stay_id'].nunique():,}")
-
-print("\nFeature groups:")
-print(f"  Temporal vitals  : {len([c for c in all_features.columns if any(v in c for v in ['heart_rate','resp_rate','temp_c','spo2','abp']) and c != 'stay_id'])}")
-print(f"  SOFA summary     : {len([c for c in all_features.columns if 'sofa' in c])}")
-print(f"  Static           : {len([c for c in all_features.columns if 'age' in c or 'gender' in c or 'adm_type' in c])}")
-print(f"  Missingness      : {len([c for c in all_features.columns if 'missing' in c and 'lac' not in c and 'wbc' not in c])}")
-print(f"  Lactate/WBC      : {len([c for c in all_features.columns if 'lactate' in c or 'wbc' in c])}")
-print(f"  Gap features     : {len([c for c in all_features.columns if any(g in c for g in ['uo_','vaso','vent','culture'])])}")
-
-print("\n--- Label Summary ---")
-print(f"Total prediction points : {len(hourly_labels):,}")
-print(f"Positive (sepsis)       : {hourly_labels['label'].sum():,}")
-print(f"Positive rate           : {hourly_labels['label'].mean():.3%}")
-for split in ['train', 'val', 'test']:
-    s = hourly_labels[hourly_labels['split'] == split]
-    print(f"{split:5s} | {len(s):>9,} points | "
-          f"positive rate {s['label'].mean():.3%}")
-
-print("\nFiles saved to Drive:")
-for fname in ['engineered_features.csv', 'feature_medians.csv',
-              'X_vitals.npy', 'feature_names.txt']:
-    fpath = OUTPUT_DIR / fname
-    if fpath.exists():
-        size_mb = fpath.stat().st_size / 1_048_576
-        print(f"  {fname:<35s} {size_mb:>7.1f} MB")
     else:
-        print(f"  {fname:<35s} NOT FOUND")
+        print('WARNING: No ventilation source found — flag will be all zeros')
+        return pd.DataFrame({'stay_id': cohort['stay_id'], 'ventilated_flag': 0})
+
+    ventilated_stays = set(vent_24h['stay_id'].unique())
+    result = cohort[['stay_id']].copy()
+    result['ventilated_flag'] = result['stay_id'].isin(ventilated_stays).astype(int)
+    return result
+
+
+def load_blood_culture_features(
+    data_dir: Path,
+    cohort: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Extract blood culture draw and positivity flags from microbiologyevents.csv.
+    Returns a per-stay DataFrame with [stay_id, blood_culture_drawn, blood_culture_positive].
+
+    Note: blood_culture_positive reflects the charted result timestamp in MIMIC,
+    which may lag the actual draw by 48–72 h. Review before using as a feature
+    in short-horizon prediction tasks.
+    """
+    micro_path = data_dir / 'microbiologyevents.csv'
+    if not micro_path.exists():
+        print('WARNING: microbiologyevents.csv not found — culture flags will be all zeros')
+        result = cohort[['stay_id']].copy()
+        result['blood_culture_drawn']    = 0
+        result['blood_culture_positive'] = 0
+        return result
+
+    micro = pd.read_csv(
+        micro_path,
+        usecols=['stay_id', 'charttime', 'spec_type_desc', 'org_name']
+    )
+    micro = micro[micro['spec_type_desc'].str.contains('blood', case=False, na=False)]
+    micro['charttime'] = pd.to_datetime(micro['charttime'])
+    micro = micro.merge(cohort[['stay_id', 'intime']], on='stay_id', how='left')
+    micro['intime'] = pd.to_datetime(micro['intime'])
+    micro['hours_since_admit'] = (
+        (micro['charttime'] - micro['intime']).dt.total_seconds() / 3600
+    )
+    micro_24h = micro[
+        (micro['hours_since_admit'] >= 0) &
+        (micro['hours_since_admit'] < 24)
+    ]
+
+    drawn_stays    = set(micro_24h['stay_id'].unique())
+    positive_stays = set(micro_24h[micro_24h['org_name'].notna()]['stay_id'].unique())
+
+    result = cohort[['stay_id']].copy()
+    result['blood_culture_drawn']    = result['stay_id'].isin(drawn_stays).astype(int)
+    result['blood_culture_positive'] = result['stay_id'].isin(positive_stays).astype(int)
+    return result
+
+
+# ── Section 8: Assemble and impute ───────────────────────────────────────────
+
+def build_feature_table(
+    stay_ids_order: list,
+    temporal_features: pd.DataFrame,
+    sofa_features: pd.DataFrame,
+    static_features: pd.DataFrame,
+    missingness_features: pd.DataFrame,
+    lab_features: pd.DataFrame,
+    gap_feature_dfs: list = None,
+) -> pd.DataFrame:
+    """
+    Left-join all feature DataFrames onto the canonical stay_id order.
+
+    Parameters
+    ----------
+    stay_ids_order     : list of stay_ids defining row order
+    temporal_features  : output of compute_temporal_features()
+    sofa_features      : output of compute_sofa_features()
+    static_features    : output of compute_static_features()
+    missingness_features : output of compute_missingness_features()
+    lab_features       : output of compute_lab_features()
+    gap_feature_dfs    : optional list of additional per-stay DataFrames
+                         (urine output, vasopressor, ventilation, culture)
+    """
+    all_features = pd.DataFrame({'stay_id': stay_ids_order})
+
+    for df in [temporal_features, sofa_features, static_features,
+               missingness_features, lab_features]:
+        all_features = all_features.merge(df, on='stay_id', how='left')
+
+    if gap_feature_dfs:
+        for df in gap_feature_dfs:
+            all_features = all_features.merge(df, on='stay_id', how='left')
+
+    print(f'Feature table shape: {all_features.shape} | '
+          f'features: {all_features.shape[1] - 1}')
+    return all_features
+
+
+def impute_with_medians(
+    all_features: pd.DataFrame,
+    split_df: pd.DataFrame,
+    feature_cols: list = None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    """
+    Fill remaining NaN values with the median computed on training stays ONLY.
+    Returns the imputed DataFrame and the medians Series (save for inference).
+
+    Parameters
+    ----------
+    all_features  : output of build_feature_table()
+    split_df      : DataFrame with [stay_id, split] where split ∈ {train, val, test}
+    feature_cols  : columns to impute; defaults to all non-stay_id columns
+    """
+    if feature_cols is None:
+        feature_cols = [c for c in all_features.columns if c != 'stay_id']
+
+    train_stay_ids = set(split_df[split_df['split'] == 'train']['stay_id'])
+    train_mask     = all_features['stay_id'].isin(train_stay_ids)
+    medians        = all_features.loc[train_mask, feature_cols].median()
+
+    all_features[feature_cols] = all_features[feature_cols].fillna(medians)
+    print(f'Missing after imputation: {all_features[feature_cols].isnull().sum().sum()}')
+    return all_features, medians
+
+
+def assert_no_leakage(all_features: pd.DataFrame) -> None:
+    """Raise AssertionError if any known leakage column is present."""
+    leaked = [c for c in all_features.columns if c in LEAKAGE_COLS]
+    assert len(leaked) == 0, f'LEAKAGE DETECTED: {leaked}'
+    print('Leakage check passed ✓')
