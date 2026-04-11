@@ -42,6 +42,10 @@ joblib>=1.3.0             # model serialization
 pathlib2>=2.3.7           # path utilities
 tqdm>=4.65.0              # progress bars
 zipfile36>=0.1.3          # zip file handling
+02b_rich_tensor
+zipfile36>=0.1.3          # zip file handling
+psutil>=5.9.0             # memory monitoring for large file reads
+pyarrow>=12.0.0           # fast parquet read/write for intermediate files
  
 # ── Notebook ─────────────────────────────────────────────────
 ipykernel>=6.0.0
