@@ -470,3 +470,15 @@ export const initialNotes = [
   { id: 'N-008', patientId: 'P-1005', author: 'Nurse Station A', role: 'nurse', text: 'Post-cardiac surgery day 2. Ambulated with assistance x1. Tolerating clear liquids. Chest tube output decreased to 50mL/shift. Incision clean and dry. Stable for continued recovery.', timestamp: '2026-04-11T14:00:00Z' },
 ];
 
+// ── Shared Tasks ──
+export const initialTasks = [
+  { id: 1, patient: 'Sarah Mitchell', bed: 'ICU-4A', patientId: 'P-1001', task: 'Administer IV Meropenem 1g', time: '21:00', type: 'medication', priority: 'critical', done: false },
+  { id: 2, patient: 'Ahmed Al-Rashid', bed: 'ICU-2B', patientId: 'P-1002', task: 'Blood culture collection', time: '21:15', type: 'lab', priority: 'critical', done: false },
+  { id: 3, patient: 'Sarah Mitchell', bed: 'ICU-4A', patientId: 'P-1001', task: 'Fluid bolus — Normal Saline 500mL', time: '21:30', type: 'medication', priority: 'critical', done: false },
+  { id: 4, patient: 'Maria Gonzalez', bed: 'ICU-6C', patientId: 'P-1003', task: 'Record hourly vitals', time: '22:00', type: 'vitals', priority: 'high', done: false },
+  { id: 5, patient: 'Fatima Hassan', bed: 'ICU-7A', patientId: 'P-1007', task: 'Administer IV Piperacillin', time: '22:00', type: 'medication', priority: 'high', done: false },
+  { id: 6, patient: 'James O\'Brien', bed: 'ICU-1A', patientId: 'P-1004', task: 'Nebulizer treatment', time: '22:30', type: 'medication', priority: 'medium', done: false },
+  { id: 7, patient: 'Yuki Tanaka', bed: 'ICU-3B', patientId: 'P-1005', task: 'Post-op wound assessment', time: '23:00', type: 'assessment', priority: 'medium', done: false },
+  { id: 8, patient: 'David Park', bed: 'ICU-8B', patientId: 'P-1008', task: 'DVT prophylaxis injection', time: '23:00', type: 'medication', priority: 'medium', done: false },
+  { id: 9, patient: 'Robert Williams', bed: 'ICU-5A', patientId: 'P-1006', task: 'Discharge vitals & documentation', time: '23:30', type: 'vitals', priority: 'low', done: false },
+];

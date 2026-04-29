@@ -2,14 +2,14 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Heart, Droplets, Wind, Thermometer, Activity, FlaskConical,
-  TrendingUp, Brain, AlertTriangle, Users,
+  TrendingUp, Brain, AlertTriangle, Users, Plus, Clock, Clipboard, Pill, HeartPulse, CheckCircle2
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import {
-  patients, currentVitals, vitalRanges, labResults, initialAlerts,
+  patients, currentVitals, vitalRanges, initialAlerts,
   getVitalTrends, getRiskTrajectory, getShapValues, getNlpSummary, getModelConfidence,
 } from '../mockData';
 import AcknowledgeModal from './AcknowledgeModal';
@@ -42,13 +42,19 @@ function riskColorHex(level) {
 }
 
 /* ═══════════════ PHYSICIAN DASHBOARD ═══════════════ */
-export default function PhysicianDashboard({ notes = [], onAddNote }) {
+export default function PhysicianDashboard({ notes = [], onAddNote, tasks = [], onAddTask, labs = {} }) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [alerts, setAlerts] = useState(initialAlerts);
   const [modalAlert, setModalAlert] = useState(null);
+
+  // New task form state
+  const [newTaskText, setNewTaskText] = useState('');
+  const [newTaskTime, setNewTaskTime] = useState('');
+  const [newTaskType, setNewTaskType] = useState('medication');
+  const [newTaskPriority, setNewTaskPriority] = useState('medium');
 
   /* Filtered patients */
   const filtered = useMemo(() => {
@@ -66,11 +72,12 @@ export default function PhysicianDashboard({ notes = [], onAddNote }) {
   const vitals = selected ? currentVitals[selected.id] : null;
   const trends = useMemo(() => selected ? getVitalTrends(selected.id) : null, [selected]);
   const trajectory = useMemo(() => selected ? getRiskTrajectory(selected.id) : [], [selected]);
-  const labs = selected ? (labResults[selected.id] || []) : [];
+  const patientLabs = selected ? (labs[selected.id] || []) : [];
   const shap = selected ? getShapValues(selected.id) : [];
   const nlp = selected ? getNlpSummary(selected.id) : '';
   const confidence = selected ? getModelConfidence(selected.id) : null;
   const patientAlerts = selected ? alerts.filter(a => a.patientId === selected.id) : [];
+  const patientTasks = selected ? tasks.filter(t => t.patientId === selected.id) : [];
 
   const handleConfirmAlert = (alertId) => {
     setAlerts(prev => prev.filter(a => a.id !== alertId));
@@ -82,6 +89,7 @@ export default function PhysicianDashboard({ notes = [], onAddNote }) {
     { key: 'trends', label: 'Vital Trends' },
     { key: 'labs', label: 'Lab Results' },
     { key: 'ai', label: 'AI Reasoning' },
+    { key: 'tasks', label: 'Tasks' },
     { key: 'notes', label: 'Notes' },
     { key: 'alerts', label: 'Alerts' },
   ];
@@ -343,7 +351,7 @@ export default function PhysicianDashboard({ notes = [], onAddNote }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {labs.map((lab, i) => (
+                          {patientLabs.map((lab, i) => (
                             <tr key={i}>
                               <td style={{ fontWeight: 500 }}>{lab.test}</td>
                               <td>{lab.value} {lab.unit}</td>
@@ -454,6 +462,113 @@ export default function PhysicianDashboard({ notes = [], onAddNote }) {
                   )}
                 </motion.div>
               )}
+              {/* ── Tasks ── */}
+              {activeTab === 'tasks' && selected && (
+                <motion.div key="tasks" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                  <div className="tasks-layout" style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
+                    {/* Task List */}
+                    <div className="glass-card" style={{ padding: 20 }}>
+                      <h3 style={{ marginBottom: 16, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Clipboard size={18} style={{ color: 'var(--accent-cyan)' }} />
+                        Assigned Tasks
+                      </h3>
+                      {patientTasks.length === 0 ? (
+                        <div className="empty-state" style={{ padding: '40px 20px' }}>
+                          <p style={{ color: 'var(--text-muted)' }}>No tasks assigned for this patient yet.</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          {patientTasks.map(task => (
+                            <div key={task.id} style={{ 
+                              display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', 
+                              background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-sm)', 
+                              border: '1px solid var(--border-glass)',
+                              borderLeft: `3px solid ${task.priority === 'critical' ? 'var(--risk-critical)' : task.priority === 'high' ? 'var(--risk-high)' : 'var(--text-muted)'}`,
+                              opacity: task.done ? 0.5 : 1
+                            }}>
+                              {task.done ? <CheckCircle2 size={18} style={{ color: 'var(--accent-cyan)' }} /> : <Clock size={18} style={{ color: 'var(--text-muted)' }} />}
+                              <div style={{ flex: 1 }}>
+                                <p style={{ fontSize: '0.9rem', fontWeight: 500, textDecoration: task.done ? 'line-through' : 'none' }}>{task.task}</p>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2, textTransform: 'capitalize' }}>{task.type} · {task.priority} Priority</p>
+                              </div>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, fontFamily: 'Outfit, sans-serif' }}>{task.time}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* New Task Form */}
+                    <div className="glass-card" style={{ padding: 20, height: 'fit-content' }}>
+                      <h3 style={{ marginBottom: 16, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Plus size={18} style={{ color: 'var(--accent-green)' }} />
+                        New Task
+                      </h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                        <div className="lab-input-group" style={{ marginBottom: 0 }}>
+                          <label>Task Description</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. Administer 1g Meropenem" 
+                            value={newTaskText} 
+                            onChange={e => setNewTaskText(e.target.value)} 
+                          />
+                        </div>
+                        <div className="lab-input-group" style={{ marginBottom: 0 }}>
+                          <label>Scheduled Time</label>
+                          <input 
+                            type="time" 
+                            value={newTaskTime} 
+                            onChange={e => setNewTaskTime(e.target.value)} 
+                          />
+                        </div>
+                        <div className="lab-input-group" style={{ marginBottom: 0 }}>
+                          <label>Type</label>
+                          <select value={newTaskType} onChange={e => setNewTaskType(e.target.value)}>
+                            <option value="medication">Medication</option>
+                            <option value="lab">Lab Order</option>
+                            <option value="vitals">Vitals Check</option>
+                            <option value="assessment">Assessment</option>
+                          </select>
+                        </div>
+                        <div className="lab-input-group" style={{ marginBottom: 0 }}>
+                          <label>Priority</label>
+                          <select value={newTaskPriority} onChange={e => setNewTaskPriority(e.target.value)}>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                          </select>
+                        </div>
+                        <button 
+                          className="btn btn-primary" 
+                          style={{ marginTop: 10, width: '100%' }}
+                          onClick={() => {
+                            if (newTaskText && newTaskTime) {
+                              onAddTask({
+                                patient: selected.name,
+                                patientId: selected.id,
+                                bed: selected.bed,
+                                task: newTaskText,
+                                time: newTaskTime,
+                                type: newTaskType,
+                                priority: newTaskPriority,
+                                done: false
+                              });
+                              setNewTaskText('');
+                              setNewTaskTime('');
+                            }
+                          }}
+                          disabled={!newTaskText || !newTaskTime}
+                        >
+                          Assign to Nurse
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
               {/* ── Notes ── */}
               {activeTab === 'notes' && selected && (
                 <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>

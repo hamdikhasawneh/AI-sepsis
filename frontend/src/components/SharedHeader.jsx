@@ -12,10 +12,6 @@ export default function SharedHeader({ role, onLogout }) {
       </div>
 
       <div className="header-right">
-        <button className="header-notif" aria-label="Notifications">
-          <Bell size={18} />
-          <span className="header-notif-badge" />
-        </button>
 
         <div className="header-user">
           <div className="header-avatar">{initials}</div>

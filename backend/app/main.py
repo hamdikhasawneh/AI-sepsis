@@ -37,6 +37,9 @@ from app.api.vitals import router as vitals_router  # noqa: E402
 from app.api.predictions import router as predictions_router  # noqa: E402
 from app.api.alerts import router as alerts_router  # noqa: E402
 from app.api.settings import router as settings_router  # noqa: E402
+from app.api.tasks import router as tasks_router  # noqa: E402
+from app.api.labs import router as labs_router  # noqa: E402
+from app.api.documents import router as documents_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/users", tags=["Users"])
@@ -45,6 +48,9 @@ app.include_router(vitals_router, prefix="/api/vitals", tags=["Vitals"])
 app.include_router(predictions_router, prefix="/api/predictions", tags=["Predictions"])
 app.include_router(alerts_router, prefix="/api/alerts", tags=["Alerts"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
+app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
+app.include_router(labs_router, prefix="/api/labs", tags=["Lab Results"])
+app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
 
 
 # Startup event: create tables and seed data
