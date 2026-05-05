@@ -18,6 +18,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
+    "browserslist": "^4.28.2",
+    "node-releases": "^2.0.38",
     "vite": "^5.2.0"
   }
 }

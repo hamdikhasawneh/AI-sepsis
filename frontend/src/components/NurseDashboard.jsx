@@ -88,6 +88,7 @@ export default function NurseDashboard({ notes = [], onAddNote, tasks = [], onTo
   const [uploadPatient, setUploadPatient] = useState('');
   const [labFormData, setLabFormData] = useState({});
   const [manualLabPatient, setManualLabPatient] = useState('');
+  const [extractedLabCount, setExtractedLabCount] = useState(0);
   const fileInputRef = useRef(null);
 
   const criticalCount = patients.filter(p => p.riskLevel === 'critical').length;
@@ -135,28 +136,33 @@ export default function NurseDashboard({ notes = [], onAddNote, tasks = [], onTo
       });
       
       if (res.ok) {
+        const data = await res.json();
         clearInterval(interval);
         setUploadProgress(100);
+        
+        // Feed each OCR-extracted lab result into the app state
+        // so they appear exactly like manually entered labs
+        const extractedLabs = data.extracted_labs || [];
+        setExtractedLabCount(extractedLabs.length);
+        
+        extractedLabs.forEach(lab => {
+          onAddLab({
+            patient_id: uploadPatient,
+            test_name: lab.test_name,
+            value: lab.value,
+            unit: lab.unit,
+            reference_range: lab.reference_range,
+            status: lab.status
+          });
+        });
       } else {
         throw new Error('Backend failed');
       }
     } catch (err) {
-      console.warn("Upload fallback: Backend not available, showing success visually", err);
-      // FAKE SUCCESS FALLBACK
+      console.warn("Upload error:", err);
       clearInterval(interval);
-      setUploadProgress(100);
-      
-      // Simulate adding some lab results
-      setTimeout(() => {
-        onAddLab({
-          patient_id: uploadPatient,
-          test_name: "White Blood Cell Count",
-          value: 14.5,
-          unit: "10^9/L",
-          reference_range: "4.5-11.0",
-          status: "high"
-        });
-      }, 500);
+      setUploadProgress(0);
+      alert("Upload failed. Please ensure the backend server is running.");
     }
     
     // Reset file input
@@ -583,14 +589,14 @@ export default function NurseDashboard({ notes = [], onAddNote, tasks = [], onTo
                   <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".pdf,image/*" onChange={handleFileChange} />
                   <Upload size={48} className="upload-zone-icon" />
                   <h4>Drag & drop lab report PDF</h4>
-                  <p>{uploadPatient ? 'or click to browse — AI will parse results via NLP' : 'Please select a patient first'}</p>
+                  <p>{uploadPatient ? 'or click to browse — OCR will extract lab results automatically' : 'Please select a patient first'}</p>
                   {uploadProgress !== null && (
                     <motion.div className="upload-progress" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                       <div className="upload-progress-bar">
                         <div className="upload-progress-fill" style={{ width: `${Math.min(uploadProgress, 100)}%` }} />
                       </div>
                       <p className="upload-progress-text">
-                        {uploadProgress >= 100 ? `✓ NLP parsing complete — results extracted for ${patients.find(p => p.id === uploadPatient)?.name || 'patient'}` : `Parsing document... ${Math.round(Math.min(uploadProgress, 99))}%`}
+                        {uploadProgress >= 100 ? `✓ OCR complete — ${extractedLabCount} lab result${extractedLabCount !== 1 ? 's' : ''} extracted for ${patients.find(p => p.id === uploadPatient)?.name || 'patient'}` : `Scanning document via OCR... ${Math.round(Math.min(uploadProgress, 99))}%`}
                       </p>
                     </motion.div>
                   )}
