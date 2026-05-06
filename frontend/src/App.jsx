@@ -5,22 +5,98 @@ import LoginView from './components/LoginView';
 import SharedHeader from './components/SharedHeader';
 import NurseDashboard from './components/NurseDashboard';
 import PhysicianDashboard from './components/PhysicianDashboard';
-import { initialNotes, initialTasks, labResults as initialLabs } from './mockData';
+import { initialNotes, initialTasks, labResults as initialLabs, initialAlerts } from './mockData';
 
 const API_BASE = 'http://localhost:8000/api';
+const WS_URL = 'ws://localhost:8000/ws/alerts';
 
 export default function App() {
   const [view, setView] = useState('home');
   const [notes, setNotes] = useState(initialNotes);
   const [tasks, setTasks] = useState([]);
   const [labs, setLabs] = useState(initialLabs);
+  const [alerts, setAlerts] = useState(initialAlerts);
+
+  // Helper for authenticated fetch
+  const authFetch = async (url, options = {}) => {
+    const token = localStorage.getItem('sepsis_token');
+    const headers = {
+      ...options.headers,
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    };
+    return fetch(url, { ...options, headers });
+  };
+
+  // ─── WebSocket for Real-time Alerts ───
+  useEffect(() => {
+    let socket;
+    let reconnectTimeout;
+
+    const connect = () => {
+      socket = new WebSocket(WS_URL);
+
+      socket.onopen = () => {
+        console.log('✅ Connected to Sepsis Alert WebSocket');
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'NEW_ALERT') {
+            console.log('🚨 NEW SEPSIS ALERT RECEIVED:', data.alert);
+            
+            const newAlert = {
+              id: data.alert.alert_id,
+              patientId: data.alert.patient_id,
+              patientName: data.alert.patient_name,
+              title: data.alert.alert_level === 'critical' ? 'CRITICAL SEPSIS RISK' : 'HIGH SEPSIS RISK',
+              message: data.alert.alert_message,
+              level: data.alert.alert_level,
+              timestamp: data.alert.created_at
+            };
+
+            setAlerts(prev => [newAlert, ...prev]);
+            
+            if (Notification.permission === 'granted') {
+              new Notification(newAlert.title, { body: newAlert.message });
+            }
+          }
+        } catch (err) {
+          console.error('Error parsing WebSocket message', err);
+        }
+      };
+
+      socket.onclose = () => {
+        console.warn('⚠️ WebSocket disconnected. Reconnecting in 5s...');
+        reconnectTimeout = setTimeout(connect, 5000);
+      };
+
+      socket.onerror = (err) => {
+        console.error('❌ WebSocket error:', err);
+        socket.close();
+      };
+    };
+
+    connect();
+    
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+
+    return () => {
+      if (socket) socket.close();
+      clearTimeout(reconnectTimeout);
+    };
+  }, []);
 
   useEffect(() => {
-    // Fetch initial tasks from backend
-    fetch(`${API_BASE}/tasks`)
+    if (view === 'home' || view === 'login') return;
+
+    // Fetch initial tasks from backend using authFetch
+    authFetch(`${API_BASE}/tasks`)
       .then(res => res.json())
       .then(data => {
-        // If the backend has no data yet, maybe fallback to initialTasks or just set the fetched data
         if (data.length > 0) {
           setTasks(data);
         } else {
@@ -31,13 +107,14 @@ export default function App() {
         console.error("Failed to fetch tasks, using mock data", err);
         setTasks(initialTasks);
       });
-  }, []);
+  }, [view]);
 
   const handleLogin = (role) => {
     setView(role);
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('sepsis_token');
     setView('home');
   };
 
@@ -47,9 +124,8 @@ export default function App() {
 
   const handleAddTask = async (task) => {
     try {
-      const res = await fetch(`${API_BASE}/tasks`, {
+      const res = await authFetch(`${API_BASE}/tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           patient_id: task.patientId,
           description: task.task,
@@ -60,7 +136,6 @@ export default function App() {
       });
       if (res.ok) {
         const newTask = await res.json();
-        // Map backend format to frontend format
         const formattedTask = {
           id: newTask.id,
           patient: task.patient,
@@ -76,7 +151,6 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error creating task", err);
-      // Fallback for demo
       setTasks(prev => [...prev, { ...task, id: Date.now() }]);
     }
   };
@@ -86,9 +160,8 @@ export default function App() {
     if (!task) return;
     
     try {
-      const res = await fetch(`${API_BASE}/tasks/${id}`, {
+      const res = await authFetch(`${API_BASE}/tasks/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_completed: !task.done })
       });
       if (res.ok) {
@@ -96,13 +169,11 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error toggling task", err);
-      // Fallback
       setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
     }
   };
 
   const handleAddLab = async (labData) => {
-    // Optimistically update local state for immediate UI feedback
     setLabs(prev => {
       const pid = labData.patient_id;
       const currentPatientLabs = prev[pid] || [];
@@ -114,7 +185,6 @@ export default function App() {
         status: labData.status
       };
       
-      // Remove any existing lab with the same test name to "update" it
       const filteredLabs = currentPatientLabs.filter(l => {
         const t1 = l.test.toLowerCase().replace('white blood cell count', 'wbc count');
         const t2 = newLab.test.toLowerCase().replace('white blood cell count', 'wbc count');
@@ -125,9 +195,8 @@ export default function App() {
     });
 
     try {
-      const res = await fetch(`${API_BASE}/labs`, {
+      const res = await authFetch(`${API_BASE}/labs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(labData)
       });
       if (res.ok) {
@@ -151,9 +220,26 @@ export default function App() {
       <SharedHeader role={view} onLogout={handleLogout} />
       <AnimatePresence mode="wait">
         {view === 'nurse' ? (
-          <NurseDashboard key="nurse" notes={notes} onAddNote={handleAddNote} tasks={tasks} onToggleTask={handleToggleTask} onAddLab={handleAddLab} labs={labs} />
+          <NurseDashboard 
+            key="nurse" 
+            notes={notes} 
+            onAddNote={handleAddNote} 
+            tasks={tasks} 
+            onToggleTask={handleToggleTask} 
+            onAddLab={handleAddLab} 
+            labs={labs} 
+          />
         ) : (
-          <PhysicianDashboard key="physician" notes={notes} onAddNote={handleAddNote} tasks={tasks} onAddTask={handleAddTask} labs={labs} />
+          <PhysicianDashboard 
+            key="physician" 
+            notes={notes} 
+            onAddNote={handleAddNote} 
+            tasks={tasks} 
+            onAddTask={handleAddTask} 
+            labs={labs} 
+            alerts={alerts} 
+            setAlerts={setAlerts}
+          />
         )}
       </AnimatePresence>
     </div>

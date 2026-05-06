@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.db.session import get_db
@@ -20,7 +22,7 @@ def list_patient_predictions(
     return get_patient_predictions(db, patient_id, limit)
 
 
-@router.get("/{patient_id}/latest", response_model=PredictionResponse | None)
+@router.get("/{patient_id}/latest", response_model=Optional[PredictionResponse])
 def get_patient_latest_prediction(
     patient_id: int,
     db: Session = Depends(get_db),

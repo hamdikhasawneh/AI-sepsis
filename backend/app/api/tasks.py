@@ -5,17 +5,20 @@ from app.db.session import get_db
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 
+from app.dependencies.auth import get_current_user, require_role
+from app.models.user import User
+
 router = APIRouter()
 
 @router.get("/", response_model=List[TaskResponse])
-def get_tasks(patient_id: str = None, db: Session = Depends(get_db)):
+def get_tasks(patient_id: str = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     query = db.query(Task)
     if patient_id:
         query = query.filter(Task.patient_id == patient_id)
     return query.all()
 
 @router.post("/", response_model=TaskResponse)
-def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+def create_task(task: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin", "doctor"))):
     db_task = Task(**task.model_dump())
     db.add(db_task)
     db.commit()
@@ -23,7 +26,7 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     return db_task
 
 @router.patch("/{task_id}", response_model=TaskResponse)
-def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depends(get_db)):
+def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     db_task = db.query(Task).filter(Task.id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")

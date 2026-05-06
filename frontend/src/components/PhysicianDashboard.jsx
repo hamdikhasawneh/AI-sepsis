@@ -42,12 +42,19 @@ function riskColorHex(level) {
 }
 
 /* ═══════════════ PHYSICIAN DASHBOARD ═══════════════ */
-export default function PhysicianDashboard({ notes = [], onAddNote, tasks = [], onAddTask, labs = {} }) {
+export default function PhysicianDashboard({ 
+  notes = [], 
+  onAddNote, 
+  tasks = [], 
+  onAddTask, 
+  labs = {}, 
+  alerts = [], 
+  setAlerts 
+}) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [selectedId, setSelectedId] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
-  const [alerts, setAlerts] = useState(initialAlerts);
   const [modalAlert, setModalAlert] = useState(null);
 
   // New task form state
@@ -76,7 +83,7 @@ export default function PhysicianDashboard({ notes = [], onAddNote, tasks = [], 
   const shap = selected ? getShapValues(selected.id) : [];
   const nlp = selected ? getNlpSummary(selected.id) : '';
   const confidence = selected ? getModelConfidence(selected.id) : null;
-  const patientAlerts = selected ? alerts.filter(a => a.patientId === selected.id) : [];
+  const patientAlerts = selected ? alerts.filter(a => String(a.patientId) === String(selected.id)) : [];
   const patientTasks = selected ? tasks.filter(t => t.patientId === selected.id) : [];
 
   const handleConfirmAlert = (alertId) => {

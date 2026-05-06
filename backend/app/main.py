@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.core.websocket import manager
 
 
 app = FastAPI(
@@ -27,6 +28,18 @@ def health_check():
 @app.get("/api/health", tags=["Health"])
 def api_health():
     return {"status": "ok"}
+
+
+# WebSocket endpoint for real-time alerts
+@app.websocket("/ws/alerts")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
 
 
 # Import and include routers

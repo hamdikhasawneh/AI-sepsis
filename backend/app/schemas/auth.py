@@ -1,4 +1,6 @@
+from __future__ import annotations
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
 
 
@@ -23,7 +25,7 @@ class UserResponse(BaseModel):
     full_name: str
     role: str
     is_active: bool
-    created_at: datetime | None = None
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -38,7 +40,8 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    full_name: str | None = None
-    email: str | None = None
-    role: str | None = None
-    is_active: bool | None = None
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+

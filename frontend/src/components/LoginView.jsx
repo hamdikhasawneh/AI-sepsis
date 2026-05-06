@@ -7,6 +7,8 @@ const CREDENTIALS = {
   nurse: { username: 'nurse.station', password: 'nurse123', name: 'Nurse Station A' },
 };
 
+const API_BASE = 'http://localhost:8000/api';
+
 export default function LoginView({ onLogin, onBack }) {
   const [selectedRole, setSelectedRole] = useState(null);
   const [username, setUsername] = useState('');
@@ -15,7 +17,7 @@ export default function LoginView({ onLogin, onBack }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -24,12 +26,35 @@ export default function LoginView({ onLogin, onBack }) {
       return;
     }
 
-    const cred = CREDENTIALS[selectedRole];
-    if (username === cred.username && password === cred.password) {
-      setLoading(true);
-      setTimeout(() => onLogin(selectedRole), 800);
-    } else {
-      setError('Invalid credentials. Check the hint below.');
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        localStorage.setItem('sepsis_token', data.access_token);
+        
+        // Fetch user info to verify role
+        const meRes = await fetch(`${API_BASE}/auth/me`, {
+          headers: { 'Authorization': `Bearer ${data.access_token}` }
+        });
+        const user = await meRes.json();
+        
+        // Determine view from role
+        const roleView = user.role === 'nurse' ? 'nurse' : 'physician';
+        onLogin(roleView);
+      } else {
+        const errData = await response.json();
+        setError(errData.detail || 'Authentication failed');
+      }
+    } catch (err) {
+      setError('Connection error. Is the backend running?');
+    } finally {
+      setLoading(false);
     }
   };
 
