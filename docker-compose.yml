@@ -27,6 +27,7 @@ services:
       DEBUG: "true"
     volumes:
       - ./backend:/app
+      - uploads_data:/app/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -47,3 +48,4 @@ services:
 
 volumes:
   pgdata:
+  uploads_data:

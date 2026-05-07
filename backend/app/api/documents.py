@@ -10,16 +10,20 @@ from app.models.lab_result import LabResult
 from app.schemas.document import DocumentResponse
 from app.services.ocr_service import process_pdf
 
+from app.dependencies.auth import get_current_user, require_role
+from app.models.user import User
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = "data/uploads"
+UPLOAD_DIR = "app/uploads"
 
 @router.post("/upload", response_model=DocumentResponse)
 def upload_document(
     patient_id: str = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin", "nurse"))
 ):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     

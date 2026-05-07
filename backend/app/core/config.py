@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
@@ -22,7 +23,11 @@ class Settings(BaseSettings):
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    _CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+    
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        return [o.strip() for o in self._CORS_ORIGINS.split(",")]
 
     class Config:
         env_file = ".env"

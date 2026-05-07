@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Alert Engine Service.
 
@@ -7,12 +8,14 @@ Prevents duplicate unread alerts for the same patient.
 
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
+import asyncio
 
 from app.models.alert import Alert
 from app.models.prediction import Prediction
 from app.models.patient import Patient
 from app.models.user import User
 from app.services.prediction_service import get_threshold
+from app.core.websocket import manager
 
 
 def check_and_create_alert(db: Session, prediction: Prediction) -> Alert | None:
@@ -58,6 +61,26 @@ def check_and_create_alert(db: Session, prediction: Prediction) -> Alert | None:
     db.add(alert)
     db.commit()
     db.refresh(alert)
+
+    # Broadcast real-time alert via WebSocket
+    try:
+        alert_payload = {
+            "type": "NEW_ALERT",
+            "alert": {
+                "alert_id": alert.alert_id,
+                "patient_id": alert.patient_id,
+                "patient_name": patient_name,
+                "alert_message": alert.alert_message,
+                "alert_level": alert_level,
+                "created_at": alert.created_at.isoformat() if alert.created_at else None,
+            }
+        }
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(manager.broadcast(alert_payload))
+    except Exception as e:
+        print(f"[WebSocket] Failed to broadcast alert: {e}")
+
     return alert
 
 

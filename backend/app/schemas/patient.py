@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from __future__ import annotations
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime, date
 
 
@@ -49,5 +50,4 @@ class PatientResponse(BaseModel):
     updated_at: datetime | None = None
     doctor_name: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

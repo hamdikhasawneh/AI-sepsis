@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 _TESSERACT_PATHS = [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    "/usr/bin/tesseract",
 ]
 for _tess_path in _TESSERACT_PATHS:
     if os.path.exists(_tess_path):
