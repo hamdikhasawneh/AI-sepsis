@@ -133,6 +133,10 @@ class DSTPredictorService(BasePredictorService):
 
             if os.path.exists(CALIBRATOR_PATH):
                 self.calibrators = joblib.load(CALIBRATOR_PATH)
+                # Patch calibrators saved with old sklearn that stored multi_class attribute
+                for lr in self.calibrators.values():
+                    if not hasattr(lr, 'multi_class'):
+                        lr.multi_class = 'auto'
                 logger.info(f"Platt calibrators loaded: {len(self.calibrators)} time points.")
 
             if os.path.exists(SCALER_PATH):
