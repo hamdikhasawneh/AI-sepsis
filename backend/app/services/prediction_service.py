@@ -3,7 +3,6 @@ import os
 import random
 import logging
 import joblib
-import torch
 import numpy as np
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -12,7 +11,16 @@ from sqlalchemy.orm import Session
 from app.models.vital_signs import VitalSign
 from app.models.prediction import Prediction
 from app.models.system_setting import SystemSetting
-from app.models.transformer_arch import DynamicSurvivalTransformer
+
+# Optional: torch and transformer are only needed when the .pt model file is present
+try:
+    import torch
+    from app.models.transformer_arch import DynamicSurvivalTransformer
+    _TORCH_AVAILABLE = True
+except ImportError:
+    torch = None  # type: ignore
+    DynamicSurvivalTransformer = None  # type: ignore
+    _TORCH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +106,8 @@ class DSTPredictorService(BasePredictorService):
     Growing window: feeds all available vitals from admission to current hour.
     """
     def __init__(self):
+        if not _TORCH_AVAILABLE:
+            raise RuntimeError("torch is not installed; DSTPredictorService unavailable.")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
         self.calibrators = None
@@ -251,10 +261,10 @@ _predictor_instance = None
 def get_predictor() -> BasePredictorService:
     global _predictor_instance
     if _predictor_instance is None:
-        if os.path.exists(MODEL_PATH):
+        if _TORCH_AVAILABLE and os.path.exists(MODEL_PATH):
             _predictor_instance = DSTPredictorService()
         else:
-            logger.warning("DST model files not found — using MockPredictorService.")
+            logger.warning("DST model files not found or torch unavailable — using MockPredictorService.")
             _predictor_instance = MockPredictorService()
     return _predictor_instance
 
