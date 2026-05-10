@@ -1,0 +1,18 @@
+{
+  "model": "DynamicSurvivalTransformer",
+  "version": "2.0",
+  "calibration": "Platt scaling",
+  "auroc": 0.7957,
+  "auprc": 0.169,
+  "best_thresh": 0.3067,
+  "sensitivity": 0.6965,
+  "specificity": 0.8131,
+  "ppv": 0.0909,
+  "npv": 0.9901,
+  "f1": 0.1609,
+  "alert_rate": 0.2002,
+  "mean_lead_time_h": 28.2,
+  "median_lead_time_h": 12.0,
+  "pct_ge_6h_lead": 0.8294,
+  "pct_ge_12h_lead": 0.5167
+}

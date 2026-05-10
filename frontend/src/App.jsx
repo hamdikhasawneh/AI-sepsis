@@ -1,247 +1,105 @@
-import { useState, useEffect } from 'react';
-import { AnimatePresence } from 'framer-motion';
-import HomePage from './components/HomePage';
-import LoginView from './components/LoginView';
-import SharedHeader from './components/SharedHeader';
-import NurseDashboard from './components/NurseDashboard';
-import PhysicianDashboard from './components/PhysicianDashboard';
-import { initialNotes, initialTasks, labResults as initialLabs, initialAlerts } from './mockData';
+import { useEffect, useState } from 'react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { useAppStore } from './store/appStore';
+import HomeScreen      from './screens/HomeScreen';
+import LoginScreen     from './screens/LoginScreen';
+import PhysicianScreen from './screens/PhysicianScreen';
+import NurseScreen     from './screens/NurseScreen';
+import { AppHeader }   from './components/shared/AppHeader';
+import { PageLoader }  from './components/ui/Spinner';
 
-const API_BASE = 'http://localhost:8000/api';
 const WS_URL = 'ws://localhost:8000/ws/alerts';
 
-export default function App() {
-  const [view, setView] = useState('home');
-  const [notes, setNotes] = useState(initialNotes);
-  const [tasks, setTasks] = useState([]);
-  const [labs, setLabs] = useState(initialLabs);
-  const [alerts, setAlerts] = useState(initialAlerts);
+/* ── Persistent auth check on every protected route ── */
+function ProtectedRoute({ role: required, children }) {
+  const { token, user, validateSession, fetchAll } = useAppStore();
+  const navigate = useNavigate();
+  const [checking, setChecking] = useState(true);
 
-  // Helper for authenticated fetch
-  const authFetch = async (url, options = {}) => {
-    const token = localStorage.getItem('sepsis_token');
-    const headers = {
-      ...options.headers,
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    };
-    return fetch(url, { ...options, headers });
-  };
-
-  // ─── WebSocket for Real-time Alerts ───
   useEffect(() => {
-    let socket;
-    let reconnectTimeout;
+    if (!token) { setChecking(false); return; }
+    validateSession().then(valid => {
+      if (valid) fetchAll();
+      setChecking(false);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (checking) return <PageLoader />;
+  if (!token)   return <Navigate to="/login" replace />;
+
+  const role = user?.role === 'nurse' ? 'nurse' : 'physician';
+  if (required && role !== required) return <Navigate to={`/${role}`} replace />;
+
+  return children;
+}
+
+/* ── WebSocket connector ── */
+function WsConnector() {
+  const { token, addWsAlert, fetchAll } = useAppStore();
+  useEffect(() => {
+    if (!token) return;
+    let socket, t;
     const connect = () => {
       socket = new WebSocket(WS_URL);
-
-      socket.onopen = () => {
-        console.log('✅ Connected to Sepsis Alert WebSocket');
-      };
-
-      socket.onmessage = (event) => {
+      socket.onmessage = ev => {
         try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'NEW_ALERT') {
-            console.log('🚨 NEW SEPSIS ALERT RECEIVED:', data.alert);
-            
-            const newAlert = {
-              id: data.alert.alert_id,
-              patientId: data.alert.patient_id,
-              patientName: data.alert.patient_name,
-              title: data.alert.alert_level === 'critical' ? 'CRITICAL SEPSIS RISK' : 'HIGH SEPSIS RISK',
-              message: data.alert.alert_message,
-              level: data.alert.alert_level,
-              timestamp: data.alert.created_at
-            };
-
-            setAlerts(prev => [newAlert, ...prev]);
-            
-            if (Notification.permission === 'granted') {
-              new Notification(newAlert.title, { body: newAlert.message });
-            }
+          const d = JSON.parse(ev.data);
+          if (d.type === 'NEW_ALERT') {
+            const a = d.alert;
+            addWsAlert({ id: a.alert_id, patientId: a.patient_id, patientName: a.patient_name || `Patient ${a.patient_id}`, bed: '', title: a.alert_level === 'critical' ? 'CRITICAL SEPSIS RISK' : 'HIGH SEPSIS RISK', message: a.alert_message, level: a.alert_level, timestamp: a.created_at || new Date().toISOString() });
+            fetchAll();
           }
-        } catch (err) {
-          console.error('Error parsing WebSocket message', err);
-        }
+        } catch (_) {}
       };
-
-      socket.onclose = () => {
-        console.warn('⚠️ WebSocket disconnected. Reconnecting in 5s...');
-        reconnectTimeout = setTimeout(connect, 5000);
-      };
-
-      socket.onerror = (err) => {
-        console.error('❌ WebSocket error:', err);
-        socket.close();
-      };
+      socket.onclose = () => { t = setTimeout(connect, 5000); };
+      socket.onerror = () => socket.close();
     };
-
     connect();
-    
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    return () => { if (socket) socket.close(); clearTimeout(t); };
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
 
-    return () => {
-      if (socket) socket.close();
-      clearTimeout(reconnectTimeout);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (view === 'home' || view === 'login') return;
-
-    // Fetch initial tasks from backend using authFetch
-    authFetch(`${API_BASE}/tasks`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.length > 0) {
-          setTasks(data);
-        } else {
-          setTasks(initialTasks);
-        }
-      })
-      .catch(err => {
-        console.error("Failed to fetch tasks, using mock data", err);
-        setTasks(initialTasks);
-      });
-  }, [view]);
-
-  const handleLogin = (role) => {
-    setView(role);
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('sepsis_token');
-    setView('home');
-  };
-
-  const handleAddNote = (note) => {
-    setNotes(prev => [...prev, note]);
-  };
-
-  const handleAddTask = async (task) => {
-    try {
-      const res = await authFetch(`${API_BASE}/tasks`, {
-        method: 'POST',
-        body: JSON.stringify({
-          patient_id: task.patientId,
-          description: task.task,
-          scheduled_time: task.time,
-          task_type: task.type,
-          priority: task.priority
-        })
-      });
-      if (res.ok) {
-        const newTask = await res.json();
-        const formattedTask = {
-          id: newTask.id,
-          patient: task.patient,
-          patientId: newTask.patient_id,
-          bed: task.bed,
-          task: newTask.description,
-          time: newTask.scheduled_time,
-          type: newTask.task_type,
-          priority: newTask.priority,
-          done: newTask.is_completed
-        };
-        setTasks(prev => [...prev, formattedTask]);
-      }
-    } catch (err) {
-      console.error("Error creating task", err);
-      setTasks(prev => [...prev, { ...task, id: Date.now() }]);
-    }
-  };
-
-  const handleToggleTask = async (id) => {
-    const task = tasks.find(t => t.id === id);
-    if (!task) return;
-    
-    try {
-      const res = await authFetch(`${API_BASE}/tasks/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ is_completed: !task.done })
-      });
-      if (res.ok) {
-        setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
-      }
-    } catch (err) {
-      console.error("Error toggling task", err);
-      setTasks(prev => prev.map(t => t.id === id ? { ...t, done: !t.done } : t));
-    }
-  };
-
-  const handleAddLab = async (labData) => {
-    setLabs(prev => {
-      const pid = labData.patient_id;
-      const currentPatientLabs = prev[pid] || [];
-      const newLab = {
-        test: labData.test_name,
-        value: labData.value,
-        unit: labData.unit,
-        range: labData.reference_range,
-        status: labData.status
-      };
-      
-      const filteredLabs = currentPatientLabs.filter(l => {
-        const t1 = l.test.toLowerCase().replace('white blood cell count', 'wbc count');
-        const t2 = newLab.test.toLowerCase().replace('white blood cell count', 'wbc count');
-        return t1 !== t2;
-      });
-      
-      return { ...prev, [pid]: [newLab, ...filteredLabs] };
-    });
-
-    try {
-      const res = await authFetch(`${API_BASE}/labs`, {
-        method: 'POST',
-        body: JSON.stringify(labData)
-      });
-      if (res.ok) {
-        await res.json();
-      }
-    } catch (err) {
-      console.warn("Backend not running - lab result saved locally only", err);
-    }
-  };
-
-  if (view === 'home') {
-    return <HomePage onNavigateLogin={() => setView('login')} />;
-  }
-
-  if (view === 'login') {
-    return <LoginView onLogin={handleLogin} onBack={() => setView('home')} />;
-  }
-
+/* ── Dashboard shell ── */
+function Dashboard({ role }) {
+  const navigate  = useNavigate();
+  const clearAuth = useAppStore(s => s.clearAuth);
   return (
-    <div className="app-shell">
-      <SharedHeader role={view} onLogout={handleLogout} />
-      <AnimatePresence mode="wait">
-        {view === 'nurse' ? (
-          <NurseDashboard 
-            key="nurse" 
-            notes={notes} 
-            onAddNote={handleAddNote} 
-            tasks={tasks} 
-            onToggleTask={handleToggleTask} 
-            onAddLab={handleAddLab} 
-            labs={labs} 
-          />
-        ) : (
-          <PhysicianDashboard 
-            key="physician" 
-            notes={notes} 
-            onAddNote={handleAddNote} 
-            tasks={tasks} 
-            onAddTask={handleAddTask} 
-            labs={labs} 
-            alerts={alerts} 
-            setAlerts={setAlerts}
-          />
-        )}
-      </AnimatePresence>
+    <div className="min-h-screen bg-void-950 flex flex-col">
+      <AppHeader role={role} onLogout={() => { clearAuth(); navigate('/'); }} />
+      {role === 'nurse' ? <NurseScreen /> : <PhysicianScreen />}
     </div>
+  );
+}
+
+/* ── Login route — redirect if already logged in ── */
+function LoginRoute() {
+  const { token, user } = useAppStore();
+  const navigate        = useNavigate();
+  if (token) { const r = user?.role === 'nurse' ? 'nurse' : 'physician'; return <Navigate to={`/${r}`} replace />; }
+  return <LoginScreen onLogin={role => navigate(`/${role}`, { replace: true })} onBack={() => navigate('/')} />;
+}
+
+/* ── Home route — redirect to dashboard if logged in ── */
+function HomeRoute() {
+  const { token, user } = useAppStore();
+  const navigate        = useNavigate();
+  if (token) { const r = user?.role === 'nurse' ? 'nurse' : 'physician'; return <Navigate to={`/${r}`} replace />; }
+  return <HomeScreen onNavigateLogin={() => navigate('/login')} />;
+}
+
+export default function App() {
+  return (
+    <>
+      <WsConnector />
+      <Routes>
+        <Route path="/"          element={<HomeRoute />} />
+        <Route path="/login"     element={<LoginRoute />} />
+        <Route path="/physician" element={<ProtectedRoute role="physician"><Dashboard role="physician" /></ProtectedRoute>} />
+        <Route path="/nurse"     element={<ProtectedRoute role="nurse"><Dashboard role="nurse" /></ProtectedRoute>} />
+        <Route path="*"          element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
