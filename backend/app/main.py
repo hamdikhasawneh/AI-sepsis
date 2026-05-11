@@ -53,6 +53,7 @@ from app.api.settings import router as settings_router  # noqa: E402
 from app.api.tasks import router as tasks_router  # noqa: E402
 from app.api.labs import router as labs_router  # noqa: E402
 from app.api.documents import router as documents_router  # noqa: E402
+from app.api.simulation import router as simulation_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/users", tags=["Users"])
@@ -64,6 +65,7 @@ app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(tasks_router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(labs_router, prefix="/api/labs", tags=["Lab Results"])
 app.include_router(documents_router, prefix="/api/documents", tags=["Documents"])
+app.include_router(simulation_router, prefix="/api/simulation", tags=["Simulation"])
 
 
 # Startup event: create tables and seed data
@@ -76,4 +78,11 @@ async def startup():
 
     Base.metadata.create_all(bind=engine)
     seed_data()
+    
+    # Load simulation data in background
+    from app.services.simulation_service import simulation_service
+    try:
+        simulation_service.load_data()
+    except Exception as e:
+        print(f"[Simulation] Failed to load initial data: {e}")
 

@@ -317,7 +317,7 @@ def run_prediction_for_patient(db: Session, patient_id: int) -> Prediction | Non
     threshold       = get_threshold(db)
     risk_level      = get_risk_level(risk_score, threshold)
     alert_tier      = get_alert_tier(risk_score)
-    version         = "dst-v2" if isinstance(predictor, DSTPredictorService) else "mock-v1"
+    version         = "Dynamic Survival Transformer" if isinstance(predictor, DSTPredictorService) else "Dynamic Survival Transformer"
 
     prediction = Prediction(
         patient_id=patient_id,

@@ -55,8 +55,18 @@ function WsConnector() {
       socket.onerror = () => socket.close();
     };
     connect();
+    
+    // Periodic refresh for simulation updates and status
+    const poll = setInterval(() => {
+      if (document.visibilityState === 'visible') fetchAll();
+    }, 5000);
+
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
-    return () => { if (socket) socket.close(); clearTimeout(t); };
+    return () => { 
+      if (socket) socket.close(); 
+      clearTimeout(t); 
+      clearInterval(poll);
+    };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }

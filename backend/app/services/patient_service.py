@@ -24,7 +24,13 @@ def get_patients_by_status(db: Session, status_filter: str = "active", doctor_id
         query = query.filter(Patient.status.in_(["discharged", "transferred"]))
 
     if doctor_id:
-        query = query.filter(Patient.assigned_doctor_id == doctor_id)
+        from sqlalchemy import or_
+        query = query.filter(
+            or_(
+                Patient.assigned_doctor_id == doctor_id,
+                Patient.ward_name == "Simulation Lab"
+            )
+        )
 
     patients = query.order_by(Patient.admission_time.desc()).all()
 
@@ -53,6 +59,13 @@ def get_patients_by_status(db: Session, status_filter: str = "active", doctor_id
             doctor = db.query(User).filter(User.user_id == p.assigned_doctor_id).first()
             if doctor:
                 data["doctor_name"] = doctor.full_name
+        
+        # Add simulation hour if patient is in Simulation Lab
+        if p.ward_name == "Simulation Lab":
+            from app.services.simulation_service import simulation_service
+            if simulation_service.is_running and simulation_service.patient_id == p.patient_id:
+                data["simulation_hour"] = simulation_service.current_hour
+
         result.append(data)
 
     return result
@@ -70,7 +83,7 @@ def get_patient_by_id(db: Session, patient_id: int):
         if doctor:
             doctor_name = doctor.full_name
 
-    return {
+    data = {
         "patient_id": patient.patient_id,
         "full_name": patient.full_name,
         "date_of_birth": patient.date_of_birth,
@@ -87,7 +100,15 @@ def get_patient_by_id(db: Session, patient_id: int):
         "created_at": patient.created_at,
         "updated_at": patient.updated_at,
         "doctor_name": doctor_name,
+        "simulation_hour": None
     }
+    
+    if patient.ward_name == "Simulation Lab":
+        from app.services.simulation_service import simulation_service
+        if simulation_service.is_running and simulation_service.patient_id == patient.patient_id:
+            data["simulation_hour"] = simulation_service.current_hour
+            
+    return data
 
 
 def update_patient(db: Session, patient_id: int, data: dict) -> Patient:

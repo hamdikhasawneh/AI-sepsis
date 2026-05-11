@@ -1,6 +1,10 @@
 from __future__ import annotations
 import os
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseSettings
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -28,6 +32,12 @@ class Settings(BaseSettings):
     @property
     def CORS_ORIGINS(self) -> list[str]:
         return [o.strip() for o in self._CORS_ORIGINS.split(",")]
+
+    # Simulation
+    SIMULATION_EXCEL_PATH: str = os.getenv(
+        "SIMULATION_EXCEL_PATH",
+        r"C:\Users\hrhkh\Downloads\icu_dst_simulation_data.xlsx"
+    )
 
     class Config:
         env_file = ".env"

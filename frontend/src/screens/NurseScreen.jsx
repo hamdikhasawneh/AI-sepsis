@@ -186,8 +186,17 @@ export default function NurseScreen() {
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className={`w-1 h-8 rounded-full flex-shrink-0 ${p.riskLevel === 'critical' ? 'bg-rose-500' : p.riskLevel === 'high' ? 'bg-orange-500' : 'bg-emerald-500'}`} />
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-200 truncate">{p.name}</p>
-                            <p className="text-[10px] text-slate-500">#{p.id}</p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-medium text-slate-200 truncate">{p.name}</p>
+                              {p.ward === 'Simulation Lab' && (
+                                <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[8px] px-1 py-0.5 rounded uppercase font-bold tracking-tighter">SIM</span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-500">
+                              {p.ward === 'Simulation Lab' && p.simulationHour !== null 
+                                ? `Hour ${p.simulationHour} · #${p.id}` 
+                                : `#${p.id}`}
+                            </p>
                           </div>
                         </div>
                         <span className="text-xs text-slate-400">{p.bed}</span>

@@ -38,9 +38,10 @@ function FadeUp({ children, delay = 0, className = "" }) {
 
 /* ─── Static data ─── */
 const stats = [
-  { value: "94.2%", label: "Sensitivity", detail: "True positive rate" },
-  { value: "0.942", label: "AUROC", detail: "Model discrimination" },
-  { value: "< 6 h", label: "Early Warning", detail: "Before clinical onset" },
+  { value: "52.6%", label: "Sensitivity", detail: "True positive rate" },
+  { value: "85.8%", label: "Specificity", detail: "True negative rate" },
+  { value: "79.6%", label: "AUROC", detail: "Model discrimination" },
+  { value: "82.7%", label: "Early Warning", detail: "Alerts ≥6h before onset" },
   { value: "12 hr", label: "Risk Horizon", detail: "Prediction window" },
 ];
 
@@ -563,7 +564,7 @@ export default function HomeScreen({ onNavigateLogin }) {
       <section className="relative py-20 border-y border-slate-800/60">
         <div className="absolute inset-0 bg-gradient-to-b from-slate-900/30 to-transparent pointer-events-none" />
         <div className="relative max-w-6xl mx-auto px-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-8">
             {stats.map((s, i) => (
               <FadeUp key={i} delay={i * 0.1}>
                 <div className="text-center">

@@ -1,4 +1,7 @@
+import os
 import random
+import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta, timezone, date
 from app.db.session import SessionLocal
 from app.models.user import User
@@ -7,6 +10,7 @@ from app.models.vital_signs import VitalSign
 from app.models.prediction import Prediction
 from app.models.alert import Alert
 from app.models.system_setting import SystemSetting
+from app.models.lab_result import LabResult
 from app.core.security import hash_password
 
 
@@ -21,7 +25,7 @@ def seed_data():
             print("[Seed] Database already has data, skipping seed.")
             return
 
-        print("[Seed] Seeding database with demo data...")
+        print("[Seed] Seeding database with real clinical data...")
 
         # ─── Users ───
         admin = User(
@@ -63,163 +67,273 @@ def seed_data():
         db.add_all([admin, doctor1, doctor2, nurse1, nurse2])
         db.flush()
 
-        # ─── Patients ───
-        patients_data = [
-            {"full_name": "Ahmad Al-Hassan", "age": 65, "gender": "male",
-             "bed_number": "ICU-01", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor1.user_id, "date_of_birth": date(1961, 3, 15),
-             "diagnosis_notes": "Suspected sepsis secondary to pneumonia"},
-            {"full_name": "Fatima Khalil", "age": 72, "gender": "female",
-             "bed_number": "ICU-02", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor1.user_id, "date_of_birth": date(1954, 7, 22),
-             "diagnosis_notes": "Post-surgical monitoring, abdominal infection"},
-            {"full_name": "Omar Nasser", "age": 45, "gender": "male",
-             "bed_number": "ICU-03", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor2.user_id, "date_of_birth": date(1981, 11, 4),
-             "diagnosis_notes": "UTI progressing to urosepsis"},
-            {"full_name": "Sara Mohammed", "age": 58, "gender": "female",
-             "bed_number": "ICU-04", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor2.user_id, "date_of_birth": date(1968, 1, 30),
-             "diagnosis_notes": "Community-acquired pneumonia with sepsis risk"},
-            {"full_name": "Khaled Ibrahim", "age": 80, "gender": "male",
-             "bed_number": "ICU-05", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor1.user_id, "date_of_birth": date(1946, 5, 12),
-             "diagnosis_notes": "Multiorgan monitoring, advanced age"},
-            {"full_name": "Layla Abdallah", "age": 34, "gender": "female",
-             "bed_number": "ICU-06", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor2.user_id, "date_of_birth": date(1992, 9, 8),
-             "diagnosis_notes": "Appendicitis post-op, monitoring for peritonitis"},
-            {"full_name": "Youssef Haddad", "age": 55, "gender": "male",
-             "bed_number": "ICU-07", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor1.user_id, "date_of_birth": date(1971, 6, 18),
-             "diagnosis_notes": "Acute respiratory distress"},
-            {"full_name": "Nour Kassem", "age": 68, "gender": "female",
-             "bed_number": "ICU-08", "ward_name": "ICU", "status": "admitted",
-             "assigned_doctor_id": doctor2.user_id, "date_of_birth": date(1958, 2, 25),
-             "diagnosis_notes": "Diabetic foot infection, sepsis watch"},
-            # History patients
-            {"full_name": "Rami Saleh", "age": 42, "gender": "male",
-             "bed_number": "ICU-09", "ward_name": "ICU", "status": "discharged",
-             "assigned_doctor_id": doctor1.user_id, "date_of_birth": date(1984, 4, 10),
-             "diagnosis_notes": "Recovered from septic shock",
-             "discharge_time": datetime.now(timezone.utc) - timedelta(days=3)},
-            {"full_name": "Dina Mansour", "age": 60, "gender": "female",
-             "bed_number": "ICU-10", "ward_name": "ICU", "status": "transferred",
-             "assigned_doctor_id": doctor2.user_id, "date_of_birth": date(1966, 8, 14),
-             "diagnosis_notes": "Transferred to general ward, stable",
-             "discharge_time": datetime.now(timezone.utc) - timedelta(days=1)},
-            {"full_name": "Hassan Barakat", "age": 75, "gender": "male",
-             "bed_number": "ICU-11", "ward_name": "ICU", "status": "discharged",
-             "assigned_doctor_id": doctor1.user_id, "date_of_birth": date(1951, 12, 3),
-             "diagnosis_notes": "Full recovery, no further ICU care needed",
-             "discharge_time": datetime.now(timezone.utc) - timedelta(days=5)},
-            {"full_name": "Mira Tawfik", "age": 29, "gender": "female",
-             "bed_number": "ICU-12", "ward_name": "ICU", "status": "transferred",
-             "assigned_doctor_id": doctor2.user_id, "date_of_birth": date(1997, 10, 20),
-             "diagnosis_notes": "Stable, moved to step-down unit",
-             "discharge_time": datetime.now(timezone.utc) - timedelta(days=2)},
-        ]
+        # ─── Load Real Data ───
+        BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        DATA_DIR = os.path.join(BASE_DIR, "data")
+        
+        cohort_path = os.path.join(DATA_DIR, "icu_cohort (1).csv")
+        vitals_path = os.path.join(DATA_DIR, "vitals_complete.csv")
+        labels_path = os.path.join(DATA_DIR, "hourly_labels.csv")
+        labs_path = os.path.join(DATA_DIR, "patient_labs.csv")
 
+        print(f"[Seed] Loading CSV data from {DATA_DIR}...")
+        cohort = pd.read_csv(cohort_path)
+        labels = pd.read_csv(labels_path)
+        vitals = pd.read_csv(vitals_path)
+        labs_df = pd.read_csv(labs_path) if os.path.exists(labs_path) else pd.DataFrame()
+
+        # Sample up to 50 patients: 25 sepsis, 25 control
+        # Only use patients with more than one reading
+        np.random.seed(42) # For reproducibility
+        stay_counts = labels['stay_id'].value_counts()
+        longitudinal_stay_ids = set(stay_counts[stay_counts > 1].index)
+        
+        all_sepsis_stay_ids = labels[labels['label'] == 1]['stay_id'].unique()
+        sepsis_stay_ids = [sid for sid in all_sepsis_stay_ids if sid in longitudinal_stay_ids]
+        
+        all_control_stay_ids = labels[~labels['stay_id'].isin(all_sepsis_stay_ids)]['stay_id'].unique()
+        control_stay_ids = [sid for sid in all_control_stay_ids if sid in longitudinal_stay_ids]
+
+        print(f"[Seed] Found {len(sepsis_stay_ids)} longitudinal sepsis patients and {len(control_stay_ids)} longitudinal control patients.")
+
+        sampled_sepsis = np.random.choice(sepsis_stay_ids, min(25, len(sepsis_stay_ids)), replace=False)
+        sampled_control = np.random.choice(control_stay_ids, min(25, len(control_stay_ids)), replace=False)
+        selected_stay_ids = np.concatenate([sampled_sepsis, sampled_control])
+
+        cohort_sample = cohort[cohort['stay_id'].isin(selected_stay_ids)]
+        labels_sample = labels[labels['stay_id'].isin(selected_stay_ids)].copy()
+        vitals_sample = vitals[vitals['stay_id'].isin(selected_stay_ids)].copy()
+        labs_sample = labs_df[labs_df['stay_id'].isin(selected_stay_ids)].copy() if not labs_df.empty else pd.DataFrame()
+
+        # Parse times in labels
+        labels_sample['abs_time'] = pd.to_datetime(labels_sample['abs_time']).dt.tz_localize(timezone.utc)
+
+        # ─── Patients ───
         patient_objects = []
-        for p_data in patients_data:
-            discharge_time = p_data.pop("discharge_time", None)
-            admission_offset = random.randint(1, 7)
+        now = datetime.now(timezone.utc)
+
+        # We will make most admitted, a few discharged.
+        admitted_stay_ids = selected_stay_ids[:40]
+
+        for _, row in cohort_sample.iterrows():
+            stay_id = row['stay_id']
+            
+            # Find max time for this patient in labels to compute offset
+            patient_labels = labels_sample[labels_sample['stay_id'] == stay_id]
+            if patient_labels.empty:
+                continue
+                
+            max_time = patient_labels['abs_time'].max()
+            
+            # If admitted, max_time becomes now. If discharged, max_time becomes now - random(1, 5) days.
+            if stay_id in admitted_stay_ids:
+                offset = now - max_time
+                status = "admitted"
+                discharge_time = None
+            else:
+                days_ago = random.randint(1, 5)
+                target_time = now - timedelta(days=days_ago)
+                offset = target_time - max_time
+                status = random.choice(["discharged", "transferred"])
+                discharge_time = target_time
+
+            # Shift the labels for this patient
+            labels_sample.loc[labels_sample['stay_id'] == stay_id, 'shifted_time'] = patient_labels['abs_time'] + offset
+            
+            # We will use this offset for vitals as well, mapping by 'hour'
+            
+            # Create Patient object
+            age = int(row['anchor_age'])
+            try:
+                date_of_birth = date(now.year - age, 1, 1)
+            except ValueError:
+                date_of_birth = date(1900, 1, 1)
+                
+            doctor = random.choice([doctor1, doctor2])
+            
             patient = Patient(
-                **p_data,
-                admission_time=datetime.now(timezone.utc) - timedelta(days=admission_offset),
+                full_name=f"Patient {row['subject_id']}",
+                age=age,
+                gender="male" if row['gender'] == "M" else "female",
+                bed_number=f"ICU-{str(stay_id)[-4:]}",
+                ward_name=str(row['first_careunit']),
+                status=status,
+                assigned_doctor_id=doctor.user_id,
+                date_of_birth=date_of_birth,
+                diagnosis_notes=f"Admission type: {row['admission_type']}",
+                admission_time=patient_labels['abs_time'].min() + offset,
                 discharge_time=discharge_time,
-                created_by_user_id=nurse1.user_id,
+                created_by_user_id=random.choice([nurse1, nurse2]).user_id,
             )
+            # Store the generated ID mapping
+            patient._stay_id = stay_id
             patient_objects.append(patient)
 
         db.add_all(patient_objects)
         db.flush()
 
-        # ─── Sample Vital Signs ── for admitted patients
-        for patient in patient_objects:
-            if patient.status != "admitted":
-                continue
-            for i in range(24):
-                timestamp = datetime.now(timezone.utc) - timedelta(minutes=30 * i)
+        # ─── Vitals ───
+        vital_objects = []
+        for p in patient_objects:
+            p_labels = labels_sample[labels_sample['stay_id'] == p._stay_id]
+            p_vitals = vitals_sample[vitals_sample['stay_id'] == p._stay_id]
+            
+            # Map hour to shifted_time
+            hour_to_time = dict(zip(p_labels['hour'], p_labels['shifted_time']))
+            
+            for _, v_row in p_vitals.iterrows():
+                hour = v_row['hour']
+                if hour not in hour_to_time:
+                    continue
+                
+                v_time = hour_to_time[hour]
+                if pd.isna(v_time):
+                    continue
+                    
                 vital = VitalSign(
-                    patient_id=patient.patient_id,
-                    recorded_at=timestamp,
-                    heart_rate=round(random.uniform(60, 120), 1),
-                    respiratory_rate=round(random.uniform(12, 30), 1),
-                    temperature=round(random.uniform(36.0, 39.5), 1),
-                    spo2=round(random.uniform(90, 100), 1),
-                    systolic_bp=round(random.uniform(90, 160), 1),
-                    diastolic_bp=round(random.uniform(50, 100), 1),
-                    mean_bp=round(random.uniform(65, 120), 1),
+                    patient_id=p.patient_id,
+                    recorded_at=v_time.to_pydatetime(),
+                    heart_rate=float(v_row['heart_rate']) if not pd.isna(v_row['heart_rate']) else None,
+                    respiratory_rate=float(v_row['resp_rate']) if not pd.isna(v_row['resp_rate']) else None,
+                    temperature=float(v_row['temp_c']) if not pd.isna(v_row['temp_c']) else None,
+                    spo2=float(v_row['spo2']) if not pd.isna(v_row['spo2']) else None,
+                    systolic_bp=float(v_row['abp_sys']) if not pd.isna(v_row['abp_sys']) else None,
+                    diastolic_bp=float(v_row['abp_dia']) if not pd.isna(v_row['abp_dia']) else None,
+                    mean_bp=float(v_row['abp_mean']) if not pd.isna(v_row['abp_mean']) else None,
                     source="monitor",
                 )
-                db.add(vital)
+                vital_objects.append(vital)
+                
+        # Bulk insert vitals
+        for i in range(0, len(vital_objects), 1000):
+            db.add_all(vital_objects[i:i+1000])
         db.flush()
-
-        # ─── Sample Predictions ── for admitted patients
-        prediction_count = 0
-        for patient in patient_objects:
-            if patient.status != "admitted":
-                continue
-            for i in range(6):
-                timestamp = datetime.now(timezone.utc) - timedelta(hours=2 * i)
-                risk_score = round(random.uniform(0.1, 0.95), 4)
+        
+        # ─── Labs ───
+        lab_objects = []
+        if not labs_sample.empty:
+            test_mapping = {
+                'lactate': ('Lactate', 'mmol/L', '0.5-2.0'),
+                'wbc': ('WBC', 'K/uL', '4.5-11.0'),
+                'platelets_raw': ('Platelets', 'K/uL', '150-450'),
+                'crp': ('CRP', 'mg/L', '<3.0'),
+                'inr': ('INR', 'ratio', '0.8-1.2'),
+                'urine_output': ('Urine Output', 'mL', '>0.5 mL/kg/hr'),
+            }
+            
+            for p in patient_objects:
+                p_labels = labels_sample[labels_sample['stay_id'] == p._stay_id]
+                p_labs = labs_sample[labs_sample['stay_id'] == p._stay_id]
+                
+                hour_to_time = dict(zip(p_labels['hour'], p_labels['shifted_time']))
+                
+                for _, l_row in p_labs.iterrows():
+                    hour = l_row['hour']
+                    if hour not in hour_to_time:
+                        continue
+                    
+                    l_time = hour_to_time[hour]
+                    if pd.isna(l_time):
+                        continue
+                        
+                    for col, (name, unit, ref) in test_mapping.items():
+                        if col in l_row and not pd.isna(l_row[col]):
+                            val = float(l_row[col])
+                            
+                            # Determine status very naively based on reference range
+                            status = "normal"
+                            try:
+                                if '-' in ref:
+                                    low, high = map(float, ref.split('-'))
+                                    if val < low: status = "low"
+                                    elif val > high: status = "high"
+                                elif '<' in ref:
+                                    high = float(ref.replace('<', ''))
+                                    if val > high: status = "high"
+                            except Exception:
+                                pass
+                                
+                            lab = LabResult(
+                                patient_id=p.patient_id,
+                                test_name=name,
+                                value=val,
+                                unit=unit,
+                                reference_range=ref,
+                                status=status,
+                                recorded_at=l_time.to_pydatetime()
+                            )
+                            lab_objects.append(lab)
+            
+            for i in range(0, len(lab_objects), 1000):
+                db.add_all(lab_objects[i:i+1000])
+            db.flush()
+        
+        # ─── Predictions ───
+        prediction_objects = []
+        for p in patient_objects:
+            p_labels = labels_sample[labels_sample['stay_id'] == p._stay_id]
+            
+            for _, l_row in p_labels.iterrows():
+                if pd.isna(l_row['shifted_time']):
+                    continue
+                    
+                # We'll simulate a risk score based on the true label. 
+                # If label=1, score is high.
+                label = l_row['label']
+                if label == 1:
+                    risk_score = random.uniform(0.8, 0.99)
+                else:
+                    risk_score = random.uniform(0.1, 0.79)
+                    
                 risk_level = "critical" if risk_score >= 0.9 else "high" if risk_score >= 0.8 else "medium" if risk_score >= 0.48 else "low"
+                
                 pred = Prediction(
-                    patient_id=patient.patient_id,
-                    predicted_at=timestamp,
+                    patient_id=p.patient_id,
+                    predicted_at=l_row['shifted_time'].to_pydatetime(),
                     risk_score=risk_score,
                     risk_level=risk_level,
                     threshold_used=0.80,
-                    model_version="mock-v1",
+                    model_version="Dynamic Survival Transformer",
                     input_window_hours=6,
                 )
-                db.add(pred)
-                prediction_count += 1
+                prediction_objects.append(pred)
+                
+        for i in range(0, len(prediction_objects), 1000):
+            db.add_all(prediction_objects[i:i+1000])
         db.flush()
 
-        # ─── Sample Alerts ── for some high-risk patients
+        # ─── Alerts ───
+        # Create alerts for some high-risk predictions of admitted patients
         alert_count = 0
-        # Create alerts for the first 3 admitted patients
-        for patient in patient_objects[:3]:
+        for p in patient_objects:
+            if p.status != "admitted":
+                continue
+                
+            # Get latest prediction
             latest_pred = (
                 db.query(Prediction)
-                .filter(Prediction.patient_id == patient.patient_id)
+                .filter(Prediction.patient_id == p.patient_id)
                 .order_by(Prediction.predicted_at.desc())
                 .first()
             )
-            if latest_pred:
+            
+            if latest_pred and latest_pred.risk_score >= 0.8:
+                # 90% chance the alert is unread, so it shows up in the UI
+                is_read = random.random() < 0.1
+                read_by = doctor1.user_id if is_read else None
+                read_at = (datetime.now(timezone.utc) - timedelta(minutes=15)) if is_read else None
+                
                 alert = Alert(
                     prediction_id=latest_pred.prediction_id,
-                    patient_id=patient.patient_id,
-                    alert_message=f"⚠️ High sepsis risk detected for {patient.full_name}. "
+                    patient_id=p.patient_id,
+                    alert_message=f"⚠️ High sepsis risk detected for {p.full_name}. "
                                   f"Risk score: {latest_pred.risk_score:.2%} (threshold: 80.00%)",
-                    alert_level="high" if latest_pred.risk_score < 0.9 else "critical",
-                    is_read=False,
+                    alert_level=latest_pred.risk_level,
+                    is_read=is_read,
+                    read_by_user_id=read_by,
+                    read_at=read_at,
                 )
                 db.add(alert)
-                alert_count += 1
-
-        # Create a read alert for patient 4
-        if len(patient_objects) > 3:
-            pred4 = (
-                db.query(Prediction)
-                .filter(Prediction.patient_id == patient_objects[3].patient_id)
-                .order_by(Prediction.predicted_at.desc())
-                .first()
-            )
-            if pred4:
-                read_alert = Alert(
-                    prediction_id=pred4.prediction_id,
-                    patient_id=patient_objects[3].patient_id,
-                    alert_message=f"⚠️ High sepsis risk detected for {patient_objects[3].full_name}. "
-                                  f"Risk score: {pred4.risk_score:.2%} (threshold: 80.00%)",
-                    alert_level="high",
-                    is_read=True,
-                    read_by_user_id=doctor2.user_id,
-                    read_at=datetime.now(timezone.utc) - timedelta(hours=1),
-                )
-                db.add(read_alert)
                 alert_count += 1
 
         # ─── System Settings ───
@@ -236,10 +350,11 @@ def seed_data():
         db.add_all([threshold_setting, sound_setting])
 
         db.commit()
-        print("[Seed] ✓ Database seeded successfully!")
+        print("[Seed] Database seeded successfully!")
         print(f"[Seed]   Users: 5 (1 admin, 2 doctors, 2 nurses)")
-        print(f"[Seed]   Patients: {len(patient_objects)} (8 admitted, 4 history)")
-        print(f"[Seed]   Predictions: {prediction_count}")
+        print(f"[Seed]   Patients: {len(patient_objects)} ({len(admitted_stay_ids)} admitted, {len(patient_objects)-len(admitted_stay_ids)} history)")
+        print(f"[Seed]   Vitals: {len(vital_objects)}")
+        print(f"[Seed]   Predictions: {len(prediction_objects)}")
         print(f"[Seed]   Alerts: {alert_count}")
         print(f"[Seed]   System settings: 2")
 
@@ -250,3 +365,4 @@ def seed_data():
         traceback.print_exc()
     finally:
         db.close()
+

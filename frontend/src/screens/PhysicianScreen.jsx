@@ -17,6 +17,7 @@ import { TabList } from '../components/ui/Tabs';
 import { Modal } from '../components/ui/Modal';
 import { VitalCard, isAbnormal } from '../components/shared/VitalCard';
 import { ChartTooltip } from '../components/shared/ChartTooltip';
+import { SimulationControl } from '../components/SimulationControl';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -38,9 +39,29 @@ function riskHex(level) {
 function genSummary(pred, shap) {
   if (!pred) return 'No prediction data available for this patient.';
   const pct = Math.round(pred.risk_score * 100);
-  const top = shap.slice(0, 3).map(f => f.feature).join(', ');
+  
+  if (!shap || shap.length === 0) {
+    return `The Dynamic Survival Transformer v2 model has analyzed the patient's recent physiological trajectories over the last ${pred.input_window_hours} hours. The current prediction indicates a ${pct}% probability of sepsis onset within the next 12-hour risk horizon. Detailed feature attributions are currently unavailable for this prediction window.`;
+  }
+
+  const topRisk = shap.filter(f => f.direction === 'increase').slice(0, 3).map(f => f.feature).join(', ');
+  const topProtective = shap.filter(f => f.direction === 'decrease').slice(0, 2).map(f => f.feature).join(', ');
+  
   const tier = pred.risk_level === 'critical' ? 'critical' : pred.risk_level === 'high_risk' ? 'elevated' : 'low';
-  return `DST v2 predicts ${pct}% sepsis risk over the next 12 hours — ${tier} alert tier. Based on ${pred.input_window_hours} sequential vital readings. Top drivers: ${top || 'insufficient data'}.`;
+  
+  let summary = `The Dynamic Survival Transformer v2 model has analyzed the patient's recent physiological trajectories over the last ${pred.input_window_hours} hours. The current prediction indicates a ${pct}% probability of sepsis onset within the next 12-hour risk horizon, placing the patient in the ${tier} risk tier.\n\n`;
+  
+  if (topRisk) {
+    summary += `Key contributing factors driving this risk assessment include elevated deviations in ${topRisk}, which strongly increased the model's risk score. `;
+  }
+  
+  if (topProtective) {
+    summary += `Conversely, trends in ${topProtective} currently exhibit a protective effect, slightly decreasing the overall predicted severity. `;
+  }
+  
+  summary += `Clinical teams should carefully monitor these specific physiological indicators and consider early intervention protocols if the risk trajectory continues to climb.`;
+  
+  return summary;
 }
 
 export default function PhysicianScreen() {
@@ -178,8 +199,17 @@ export default function PhysicianScreen() {
             >
               <div className={`w-1.5 h-6 rounded-full flex-shrink-0 ${p.riskLevel === 'critical' ? 'bg-rose-500' : p.riskLevel === 'high' ? 'bg-orange-500' : 'bg-emerald-500'}`} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-200 truncate">{p.name}</p>
-                <p className="text-xs text-slate-500">{p.bed}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium text-slate-200 truncate">{p.name}</p>
+                  {p.ward === 'Simulation Lab' && (
+                    <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-tighter">SIM</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  {p.ward === 'Simulation Lab' && p.simulationHour !== null 
+                    ? `Hour ${p.simulationHour} · ${p.bed}` 
+                    : p.bed}
+                </p>
               </div>
               <RiskBadge level={p.riskLevel} score={p.sepsisScore} />
             </button>
@@ -205,12 +235,19 @@ export default function PhysicianScreen() {
                 <h1 className="text-lg font-bold text-slate-100">{selected.name}</h1>
                 <p className="text-xs text-slate-500 mt-0.5">{selected.age} y/o · {selected.gender} · {selected.bed} · Admitted {selected.admitDate}</p>
               </div>
-              <div className={`text-right px-4 py-2.5 rounded-xl border
-                ${selected.riskLevel === 'critical' ? 'bg-rose-500/8 border-rose-500/20' : selected.riskLevel === 'high' ? 'bg-orange-500/8 border-orange-500/20' : 'bg-emerald-500/8 border-emerald-500/20'}`}>
-                <div className={`text-3xl font-mono font-bold ${selected.riskLevel === 'critical' ? 'text-rose-400' : selected.riskLevel === 'high' ? 'text-orange-400' : 'text-emerald-400'}`}>
-                  {selected.sepsisScore}%
+              <div className="flex items-center gap-4">
+                {patientAlerts.length > 0 && (
+                  <Button onClick={() => setAckAlert(patientAlerts[0])} className="bg-rose-600 hover:bg-rose-500 border-none shadow-[0_0_15px_rgba(225,29,72,0.4)] transition-all flex items-center">
+                    <AlertTriangle size={16} className="mr-1.5" /> Acknowledge Alert
+                  </Button>
+                )}
+                <div className={`text-right px-4 py-2.5 rounded-xl border
+                  ${selected.riskLevel === 'critical' ? 'bg-rose-500/8 border-rose-500/20' : selected.riskLevel === 'high' ? 'bg-orange-500/8 border-orange-500/20' : 'bg-emerald-500/8 border-emerald-500/20'}`}>
+                  <div className={`text-3xl font-mono font-bold ${selected.riskLevel === 'critical' ? 'text-rose-400' : selected.riskLevel === 'high' ? 'text-orange-400' : 'text-emerald-400'}`}>
+                    {selected.sepsisScore}%
+                  </div>
+                  <div className="text-xs text-slate-500 capitalize">{selected.riskLevel} risk</div>
                 </div>
-                <div className="text-xs text-slate-500 capitalize">{selected.riskLevel} risk</div>
               </div>
             </div>
 
@@ -542,6 +579,8 @@ export default function PhysicianScreen() {
           </div>
         )}
       </Modal>
+      {/* Simulation Lab Control */}
+      <SimulationControl />
     </div>
   );
 }
