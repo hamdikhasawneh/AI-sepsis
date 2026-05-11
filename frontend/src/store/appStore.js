@@ -38,6 +38,7 @@ function normPatient(p, pred, vital) {
     riskLevel,
     diagnosis: p.diagnosis_notes || '',
     status: p.status,
+    simulationHour: p.simulation_hour || null,
     latestVitals: vital ? {
       hr: vital.heart_rate,
       rr: vital.respiratory_rate,

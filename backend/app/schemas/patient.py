@@ -49,5 +49,6 @@ class PatientResponse(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     doctor_name: str | None = None
+    simulation_hour: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
