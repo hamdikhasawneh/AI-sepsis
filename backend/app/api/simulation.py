@@ -51,3 +51,12 @@ def stop_simulation(
     """Stop the current simulation."""
     simulation_service.stop()
     return {"message": "Simulation stopped"}
+
+@router.delete("/clear")
+def clear_simulation(
+    patient_id: int = None,
+    current_user: User = Depends(require_role("admin", "doctor")),
+):
+    """Clear simulation patients from the database."""
+    simulation_service.clear(patient_id)
+    return {"message": "Simulation patient cleared"}

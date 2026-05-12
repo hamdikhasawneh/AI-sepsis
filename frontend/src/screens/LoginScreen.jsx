@@ -65,7 +65,7 @@ export default function LoginScreen({ onLogin, onBack }) {
           <div className="w-12 h-12 bg-brand-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-brand-600/30">
             <Activity size={22} className="text-white" strokeWidth={2.5} />
           </div>
-          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">SepsisAI</h1>
+          <h1 className="text-2xl font-bold text-slate-100 tracking-tight">ARISE</h1>
           <p className="text-sm text-slate-500 mt-1">ICU Intelligence Platform</p>
         </div>
 
@@ -87,7 +87,7 @@ export default function LoginScreen({ onLogin, onBack }) {
                     </button>
                   )}
                   <h2 className="text-base font-semibold text-slate-200 mb-1">Select your role</h2>
-                  <p className="text-sm text-slate-500 mb-6">Choose how you'll access SepsisAI</p>
+                  <p className="text-sm text-slate-500 mb-6">Choose how you'll access ARISE</p>
 
                   <div className="flex flex-col gap-3">
                     {[

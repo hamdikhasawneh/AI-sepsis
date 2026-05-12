@@ -16,7 +16,7 @@ export function AppHeader({ role, onLogout }) {
         <div className="w-7 h-7 bg-brand-600 rounded-lg flex items-center justify-center shadow-lg shadow-brand-600/30">
           <Activity size={14} className="text-white" strokeWidth={2.5} />
         </div>
-        <span className="font-bold text-slate-100 tracking-tight">SepsisAI</span>
+        <span className="font-bold text-slate-100 tracking-tight">ARISE</span>
         <div className="w-px h-4 bg-slate-800" />
         <span className="text-xs text-slate-500 font-medium">{roleLabel}</span>
       </div>

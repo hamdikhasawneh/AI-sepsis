@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Heart, Droplets, Wind, Thermometer, Activity,
-  TrendingUp, Brain, Users, Plus, Clock, Clipboard, CheckCircle2, AlertTriangle,
+  TrendingUp, Brain, Users, Plus, Clock, Clipboard, CheckCircle2, AlertTriangle, X
 } from 'lucide-react';
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -97,32 +97,38 @@ export default function PhysicianScreen() {
     if (!selectedId) return;
     setVitals(null); setVitalHistory([]); setTrajectory([]); setShapData([]); setPrediction(null);
 
-    authFetch(`${API_BASE}/vitals/${selectedId}`)
-      .then(r => r.json()).then(data => {
-        if (data.length) {
-          const l = data[data.length - 1];
-          setVitals({ hr: l.heart_rate, rr: l.respiratory_rate, temp: l.temperature, spo2: l.spo2, bpSys: l.systolic_bp, bpDia: l.diastolic_bp });
-          setVitalHistory(data);
-        }
-      }).catch(() => {});
+    const fetchPatientDetails = () => {
+      authFetch(`${API_BASE}/vitals/${selectedId}`)
+        .then(r => r.json()).then(data => {
+          if (data.length) {
+            const l = data[data.length - 1];
+            setVitals({ hr: l.heart_rate, rr: l.respiratory_rate, temp: l.temperature, spo2: l.spo2, bpSys: l.systolic_bp, bpDia: l.diastolic_bp });
+            setVitalHistory(data);
+          }
+        }).catch(() => {});
 
-    authFetch(`${API_BASE}/predictions/${selectedId}?limit=24`)
-      .then(r => r.json()).then(data => {
-        setTrajectory([...data].reverse().map(p => ({
-          time: new Date(p.predicted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          value: Math.round(p.risk_score * 100),
-        })));
-        if (data.length) setPrediction(data[0]);
-      }).catch(() => {});
+      authFetch(`${API_BASE}/predictions/${selectedId}?limit=100`)
+        .then(r => r.json()).then(data => {
+          setTrajectory([...data].reverse().map((p, i) => ({
+            time: useAppStore.getState().patients.find(pt => pt.id === selectedId)?.ward === 'Simulation Lab' ? `Hour ${i + 1}` : new Date(p.predicted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            value: Math.round(p.risk_score * 100),
+          })));
+          if (data.length) setPrediction(data[0]);
+        }).catch(() => {});
 
-    authFetch(`${API_BASE}/predictions/${selectedId}/shap`)
-      .then(r => r.ok ? r.json() : null).then(data => {
-        if (data?.features) setShapData(data.features.map(f => ({
-          feature: f.feature,
-          impact: Math.abs(f.shap_value),
-          direction: f.direction === 'Risk +' ? 'increase' : 'decrease',
-        })));
-      }).catch(() => {});
+      authFetch(`${API_BASE}/predictions/${selectedId}/shap`)
+        .then(r => r.ok ? r.json() : null).then(data => {
+          if (data?.features) setShapData(data.features.map(f => ({
+            feature: f.feature,
+            impact: Math.abs(f.shap_value),
+            direction: f.direction === 'Risk +' ? 'increase' : 'decrease',
+          })));
+        }).catch(() => {});
+    };
+
+    fetchPatientDetails();
+    const interval = setInterval(fetchPatientDetails, 5000);
+    return () => clearInterval(interval);
   }, [selectedId]);
 
   const filtered = useMemo(() => {
@@ -133,7 +139,7 @@ export default function PhysicianScreen() {
       const q = search.toLowerCase();
       list = list.filter(p => p.name.toLowerCase().includes(q) || String(p.id).includes(q) || p.bed?.toLowerCase().includes(q));
     }
-    return list;
+    return list.sort((a, b) => b.sepsisScore - a.sepsisScore);
   }, [patients, search, filter]);
 
   const selected = patients.find(p => p.id === selectedId) || null;
@@ -143,8 +149,8 @@ export default function PhysicianScreen() {
 
   const trends = useMemo(() => {
     if (!vitalHistory.length) return null;
-    const m = key => vitalHistory.map(v => ({
-      time: new Date(v.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    const m = key => vitalHistory.map((v, i) => ({
+      time: selected?.ward === 'Simulation Lab' ? `Hour ${i + 1}` : new Date(v.recorded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       value: v[key],
     }));
     return { hr: m('heart_rate'), bpSys: m('systolic_bp'), bpDia: m('diastolic_bp'), rr: m('respiratory_rate'), temp: m('temperature') };
@@ -199,10 +205,23 @@ export default function PhysicianScreen() {
             >
               <div className={`w-1.5 h-6 rounded-full flex-shrink-0 ${p.riskLevel === 'critical' ? 'bg-rose-500' : p.riskLevel === 'high' ? 'bg-orange-500' : 'bg-emerald-500'}`} />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 w-full">
                   <p className="text-sm font-medium text-slate-200 truncate">{p.name}</p>
                   {p.ward === 'Simulation Lab' && (
-                    <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-tighter">SIM</span>
+                    <>
+                      <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-tighter">SIM</span>
+                      <button 
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await authFetch(`http://localhost:8000/api/simulation/clear?patient_id=${p.id}`, { method: 'DELETE' });
+                          useAppStore.getState().fetchAll();
+                        }}
+                        className="ml-auto p-1 rounded hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 transition-colors"
+                        title="Remove Simulated Patient"
+                      >
+                        <X size={14} />
+                      </button>
+                    </>
                   )}
                 </div>
                 <p className="text-xs text-slate-500">
@@ -581,6 +600,14 @@ export default function PhysicianScreen() {
       </Modal>
       {/* Simulation Lab Control */}
       <SimulationControl />
+      {!useAppStore(s => s.isSimulationPanelOpen) && (
+        <Button 
+          onClick={() => useAppStore.getState().setSimulationPanelOpen(true)}
+          className="fixed bottom-6 right-6 z-50 rounded-full shadow-lg shadow-indigo-500/20 bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-2 px-4 py-2"
+        >
+          <Activity className="w-4 h-4" /> Open Simulation Lab
+        </Button>
+      )}
     </div>
   );
 }
