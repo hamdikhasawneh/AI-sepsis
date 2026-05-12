@@ -85,11 +85,16 @@ docker compose up
 |------|---------|-------|
 | Python | 3.10 or 3.11 | python.org — check "Add to PATH" during install |
 | Node.js | 18+ | nodejs.org |
-| Tesseract OCR | 5.x | https://github.com/UB-Mannheim/tesseract/wiki — add install dir to PATH |
 
 ---
 
-### 1. Place model files
+### 1. Configure Gemini Vision (Optional but Recommended)
+
+For lab report OCR, add your Google Gemini API key to `backend/.env`:
+```env
+GEMINI_API_KEY=AIzaSy...
+```
+If not provided, the system falls back to basic PyMuPDF text extraction.
 
 Copy all DST v2 files into:
 ```
