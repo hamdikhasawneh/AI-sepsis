@@ -65,9 +65,11 @@ export const useAppStore = create(
       alerts: [],
       tasks: [],
       labs: {},
+      selectedPatientId: null,
 
-      // ── Auth ──────────────────────────────────────────────
+      // UI
       setSimulationPanelOpen: (isOpen) => set({ isSimulationPanelOpen: isOpen }),
+      setSelectedPatientId: (id) => set({ selectedPatientId: id }),
       
       setAuth: (user, token) => {
         localStorage.setItem('sepsis_token', token);
@@ -280,8 +282,16 @@ export const useAppStore = create(
       },
     }),
     {
-      name: 'sepsis-auth',
-      partialize: state => ({ user: state.user, token: state.token }),
+      name: 'sepsis-auth-v2',
+      partialize: state => ({ 
+        user: state.user, 
+        token: state.token,
+        patients: state.patients,
+        alerts: state.alerts,
+        tasks: state.tasks,
+        labs: state.labs,
+        selectedPatientId: state.selectedPatientId
+      }),
     }
   )
 );

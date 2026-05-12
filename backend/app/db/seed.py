@@ -19,16 +19,29 @@ def seed_data():
     db = SessionLocal()
 
     try:
-        # Check if already seeded
-        # Check if already seeded - now more robustly checking for patients
-        existing_patients = db.query(Patient).count()
-        if existing_patients >= 50:
-            print(f"[Seed] Database already has {existing_patients} patients, skipping full seed.")
-            # Still ensure simulation patient exists
+        # Check for Golden Cohort presence
+        # These 50 patients represent the 'Golden Cohort' for the demo
+        SELECTED_STAY_IDS = [
+            30537844, 30869173, 31012962, 31051881, 31255243, 31397640, 31414888, 31561455, 31656015, 31867131,
+            32270595, 32420044, 32663618, 32805896, 33171675, 33430774, 33621866, 33698582, 33902383, 33921453,
+            34081339, 34090532, 34265197, 34338856, 34558348, 34674321, 34745032, 34846812, 35159156, 35278638,
+            35421158, 35682113, 35742138, 35914249, 36059436, 36222449, 36240799, 36565779, 36780740, 37048740,
+            37410020, 37577996, 37624449, 37788731, 37884771, 38106426, 38388531, 38857376, 39608066, 39678590
+        ]
+        
+        # Check if we already have these patients (using bed_number as a proxy since we don't store stay_id directly)
+        # Actually, we can check by bed_number prefix ICU-XXXX
+        existing_beds = [p.bed_number for p in db.query(Patient.bed_number).all()]
+        golden_beds = [f"ICU-{str(sid)[-4:]}" for sid in SELECTED_STAY_IDS]
+        
+        missing_golden = [b for b in golden_beds if b not in existing_beds]
+        
+        if not missing_golden and db.query(Patient).count() >= 50:
+            print(f"[Seed] Golden Cohort and sufficient patients already exist, skipping full seed.")
             _ensure_sim_patient(db)
             return
 
-        print("[Seed] Seeding database with fixed longitudinal cohort...")
+        print(f"[Seed] Seeding database with fixed longitudinal cohort (Missing {len(missing_golden)} golden patients)...")
 
         # ─── Users ───
         # (same as before but ensure they exist)
@@ -60,28 +73,15 @@ def seed_data():
         vitals = pd.read_csv(vitals_path)
         labs_df = pd.read_csv(labs_path) if os.path.exists(labs_path) else pd.DataFrame()
 
-        # Hardcoded stay_ids for consistency across all environments
-        # These 50 patients represent the 'Golden Cohort' for the demo
-        SELECTED_STAY_IDS = [
-            30537844, 30869173, 31012962, 31051881, 31255243, 31397640, 31414888, 31561455, 31656015, 31867131,
-            32270595, 32420044, 32663618, 32805896, 33171675, 33430774, 33621866, 33698582, 33902383, 33921453,
-            34081339, 34090532, 34265197, 34338856, 34558348, 34674321, 34745032, 34846812, 35159156, 35278638,
-            35421158, 35682113, 35742138, 35914249, 36059436, 36222449, 36240799, 36565779, 36780740, 37048740,
-            37410020, 37577996, 37624449, 37788731, 37884771, 38106426, 38388531, 38857376, 39608066, 39678590
-        ]
-        
         selected_stay_ids = [sid for sid in SELECTED_STAY_IDS if sid in labels['stay_id'].values]
-        print(f"[Seed] Seeding {len(selected_stay_ids)} selected patients.")
+        sepsis_stay_ids = labels[labels['label'] == 1]['stay_id'].unique()
+        print(f"[Seed] Seeding {len(selected_stay_ids)} selected patients ({len(set(selected_stay_ids) & set(sepsis_stay_ids))} with sepsis).")
         
         cohort_sample = cohort[cohort['stay_id'].isin(selected_stay_ids)]
         labels_sample = labels[labels['stay_id'].isin(selected_stay_ids)].copy()
         vitals_sample = vitals[vitals['stay_id'].isin(selected_stay_ids)].copy()
         labs_sample = labs_df[labs_df['stay_id'].isin(selected_stay_ids)].copy() if not labs_df.empty else pd.DataFrame()
 
-        cohort_sample = cohort[cohort['stay_id'].isin(selected_stay_ids)]
-        labels_sample = labels[labels['stay_id'].isin(selected_stay_ids)].copy()
-        vitals_sample = vitals[vitals['stay_id'].isin(selected_stay_ids)].copy()
-        labs_sample = labs_df[labs_df['stay_id'].isin(selected_stay_ids)].copy() if not labs_df.empty else pd.DataFrame()
 
         # Parse times in labels
         labels_sample['abs_time'] = pd.to_datetime(labels_sample['abs_time']).dt.tz_localize(timezone.utc)

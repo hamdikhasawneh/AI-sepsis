@@ -58,7 +58,9 @@ export default function NurseScreen() {
   const fetchAll      = useAppStore(s => s.fetchAll);
 
   const [activeTab, setActiveTab] = useState('monitor');
-  const [selected, setSelected]   = useState(null);
+  const selectedId = useAppStore(s => s.selectedPatientId);
+  const setSelectedId = useAppStore(s => s.setSelectedPatientId);
+  const selected = patients.find(p => p.id === selectedId) || null;
   const [labMode, setLabMode]     = useState('manual');
   const [uploadPid, setUploadPid] = useState('');
   const [uploadProgress, setUploadProgress] = useState(null);
@@ -251,7 +253,7 @@ export default function NurseScreen() {
                         key={p.id}
                         className={`grid grid-cols-[1fr_60px_80px_50px_52px_52px] gap-3 items-center px-5 py-3 cursor-pointer transition-colors
                           ${isSel ? 'bg-slate-800' : 'hover:bg-slate-900'}`}
-                        onClick={() => setSelected(isSel ? null : p)}
+                        onClick={() => setSelectedId(isSel ? null : p.id)}
                         layout
                       >
                         <div className="flex items-center gap-2.5 min-w-0">

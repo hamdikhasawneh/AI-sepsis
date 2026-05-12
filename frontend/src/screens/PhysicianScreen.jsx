@@ -74,7 +74,8 @@ export default function PhysicianScreen() {
 
   const [search, setSearch]     = useState('');
   const [filter, setFilter]     = useState('all');
-  const [selectedId, setSelectedId] = useState(null);
+  const selectedId = useAppStore(s => s.selectedPatientId);
+  const setSelectedId = useAppStore(s => s.setSelectedPatientId);
   const [activeTab, setActiveTab]   = useState('overview');
   const [ackAlert, setAckAlert]     = useState(null);
   const [ackNote, setAckNote]       = useState('');
