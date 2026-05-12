@@ -38,9 +38,9 @@ function FadeUp({ children, delay = 0, className = "" }) {
 
 /* ─── Static data ─── */
 const stats = [
-  { value: "52.6%", label: "Sensitivity", detail: "True positive rate" },
-  { value: "85.8%", label: "Specificity", detail: "True negative rate" },
-  { value: "79.6%", label: "AUROC", detail: "Model discrimination" },
+  { value: "69.7%", label: "Sensitivity", detail: "True positive rate" },
+  { value: "81.31%", label: "Specificity", detail: "True negative rate" },
+  { value: "0.7957", label: "AUROC", detail: "Model discrimination" },
   { value: "82.7%", label: "Early Warning", detail: "Alerts ≥6h before onset" },
   { value: "12 hr", label: "Risk Horizon", detail: "Prediction window" },
 ];

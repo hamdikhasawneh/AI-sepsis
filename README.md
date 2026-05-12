@@ -47,6 +47,27 @@ docker compose up --build
 
 ---
 
+## 📊 Model Performance
+
+The ARISE system is powered by a high-performance **Dynamic Survival Transformer (DST v2)**, which significantly outperforms traditional rule-based and classification baselines in early sepsis detection.
+
+### Performance Summary
+
+| Model Architecture | Task Type | AUROC | AUPRC | Sensitivity | Lead Time |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **DST v2 (Primary)** | Survival | 0.7957* | 0.1690 | **69.7%** | **28.2 Hours** |
+| **Full Ensemble** | Classification | **0.9013** | **0.4256** | 48.06% | N/A |
+| **Tree Ensemble** | Classification | 0.8936 | 0.3833 | 43.09% | N/A |
+| **LSTM (Rich)** | Sequence | 0.8787 | 0.3774 | 47.82% | N/A |
+| **Random Forest** | Classification | 0.8791 | 0.3260 | 45.76% | N/A |
+
+*\* Note: DST v2 AUROC reflects rolling-window performance on streaming data. See [Model Performance](docs/model_performance.md) for full details.*
+
+For a complete breakdown of all model metrics, features, and evaluation methodologies, please refer to:
+👉 **[Full Model Performance Documentation](docs/model_performance.md)**
+
+---
+
 ## Architecture Overview
 
 ```
