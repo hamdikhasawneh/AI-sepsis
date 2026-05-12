@@ -8,7 +8,7 @@ import NurseScreen     from './screens/NurseScreen';
 import { AppHeader }   from './components/shared/AppHeader';
 import { PageLoader }  from './components/ui/Spinner';
 
-const WS_URL = 'ws://localhost:8000/ws/alerts';
+const WS_URL = `ws://${window.location.hostname}:8000/ws/alerts`;
 
 /* ── Persistent auth check on every protected route ── */
 function ProtectedRoute({ role: required, children }) {

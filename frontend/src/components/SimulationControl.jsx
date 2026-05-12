@@ -5,7 +5,7 @@ import { Card, CardBody } from './ui/Card';
 import { Button } from './ui/Button';
 import { authFetch, useAppStore } from '../store/appStore';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = `http://${window.location.hostname}:8000/api`;
 
 export function SimulationControl() {
   const isSimulationPanelOpen = useAppStore(s => s.isSimulationPanelOpen);
