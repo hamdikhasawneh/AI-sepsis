@@ -16,6 +16,7 @@ from app.core.security import hash_password
 
 def seed_data():
     """Seed the database with demo data if empty."""
+    random.seed(42)
     db = SessionLocal()
 
     try:
@@ -37,11 +38,21 @@ def seed_data():
         missing_golden = [b for b in golden_beds if b not in existing_beds]
         
         if not missing_golden and db.query(Patient).count() >= 50:
-            print(f"[Seed] Golden Cohort and sufficient patients already exist, skipping full seed.")
+            print(f"[Seed] Golden Cohort already exists, skipping full seed.")
             _ensure_sim_patient(db)
             return
 
-        print(f"[Seed] Seeding database with fixed longitudinal cohort (Missing {len(missing_golden)} golden patients)...")
+        print(f"[Seed] Golden Cohort missing or incomplete. Resetting database for consistency...")
+        
+        # Clear existing data to ensure exact match across devices
+        db.query(Alert).delete()
+        db.query(Prediction).delete()
+        db.query(VitalSign).delete()
+        db.query(LabResult).delete()
+        db.query(Patient).delete()
+        db.commit()
+
+        print(f"[Seed] Seeding database with fixed longitudinal cohort...")
 
         # ─── Users ───
         # (same as before but ensure they exist)

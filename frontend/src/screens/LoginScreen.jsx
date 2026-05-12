@@ -5,7 +5,7 @@ import { useAppStore } from '../store/appStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = `http://${window.location.hostname}:8000/api`;
 
 const DEMO = {
   physician: { username: 'dr.smith',   password: 'doctor123' },

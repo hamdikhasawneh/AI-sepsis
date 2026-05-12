@@ -19,7 +19,7 @@ import { VitalCard, isAbnormal } from '../components/shared/VitalCard';
 import { ChartTooltip } from '../components/shared/ChartTooltip';
 import { SimulationControl } from '../components/SimulationControl';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = `http://${window.location.hostname}:8000/api`;
 
 const TABS = [
   { key: 'overview', label: 'Overview'     },
@@ -214,7 +214,7 @@ export default function PhysicianScreen() {
                       <button 
                         onClick={async (e) => {
                           e.stopPropagation();
-                          await authFetch(`http://localhost:8000/api/simulation/clear?patient_id=${p.id}`, { method: 'DELETE' });
+                          await authFetch(`http://${window.location.hostname}:8000/api/simulation/clear?patient_id=${p.id}`, { method: 'DELETE' });
                           useAppStore.getState().fetchAll();
                         }}
                         className="ml-auto p-1 rounded hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 transition-colors"
