@@ -20,51 +20,30 @@ def seed_data():
 
     try:
         # Check if already seeded
-        existing_users = db.query(User).count()
-        if existing_users > 0:
-            print("[Seed] Database already has data, skipping seed.")
+        # Check if already seeded - now more robustly checking for patients
+        existing_patients = db.query(Patient).count()
+        if existing_patients >= 50:
+            print(f"[Seed] Database already has {existing_patients} patients, skipping full seed.")
+            # Still ensure simulation patient exists
+            _ensure_sim_patient(db)
             return
 
-        print("[Seed] Seeding database with real clinical data...")
+        print("[Seed] Seeding database with fixed longitudinal cohort...")
 
         # ─── Users ───
-        admin = User(
-            username="admin",
-            email="admin@sepsis.icu",
-            password_hash=hash_password("admin123"),
-            full_name="System Admin",
-            role="admin",
-        )
-        doctor1 = User(
-            username="dr.smith",
-            email="smith@sepsis.icu",
-            password_hash=hash_password("doctor123"),
-            full_name="Dr. John Smith",
-            role="doctor",
-        )
-        doctor2 = User(
-            username="dr.johnson",
-            email="johnson@sepsis.icu",
-            password_hash=hash_password("doctor123"),
-            full_name="Dr. Sarah Johnson",
-            role="doctor",
-        )
-        nurse1 = User(
-            username="nurse.jane",
-            email="jane@sepsis.icu",
-            password_hash=hash_password("nurse123"),
-            full_name="Jane Williams",
-            role="nurse",
-        )
-        nurse2 = User(
-            username="nurse.mike",
-            email="mike@sepsis.icu",
-            password_hash=hash_password("nurse123"),
-            full_name="Mike Thompson",
-            role="nurse",
-        )
+        # (same as before but ensure they exist)
+        def get_or_create_user(username, email, password, full_name, role):
+            u = db.query(User).filter(User.username == username).first()
+            if not u:
+                u = User(username=username, email=email, password_hash=hash_password(password), full_name=full_name, role=role)
+                db.add(u)
+            return u
 
-        db.add_all([admin, doctor1, doctor2, nurse1, nurse2])
+        admin = get_or_create_user("admin", "admin@sepsis.icu", "admin123", "System Admin", "admin")
+        doctor1 = get_or_create_user("dr.smith", "smith@sepsis.icu", "doctor123", "Dr. John Smith", "doctor")
+        doctor2 = get_or_create_user("dr.johnson", "johnson@sepsis.icu", "doctor123", "Dr. Sarah Johnson", "doctor")
+        nurse1 = get_or_create_user("nurse.jane", "jane@sepsis.icu", "nurse123", "Jane Williams", "nurse")
+        nurse2 = get_or_create_user("nurse.mike", "mike@sepsis.icu", "nurse123", "Mike Thompson", "nurse")
         db.flush()
 
         # ─── Load Real Data ───
@@ -76,30 +55,28 @@ def seed_data():
         labels_path = os.path.join(DATA_DIR, "hourly_labels.csv")
         labs_path = os.path.join(DATA_DIR, "patient_labs.csv")
 
-        print(f"[Seed] Loading CSV data from {DATA_DIR}...")
         cohort = pd.read_csv(cohort_path)
         labels = pd.read_csv(labels_path)
         vitals = pd.read_csv(vitals_path)
         labs_df = pd.read_csv(labs_path) if os.path.exists(labs_path) else pd.DataFrame()
 
-        # Sample up to 50 patients: 25 sepsis, 25 control
-        # Only use patients with more than one reading
-        np.random.seed(42) # For reproducibility
-        stay_counts = labels['stay_id'].value_counts()
-        longitudinal_stay_ids = set(stay_counts[stay_counts > 1].index)
+        # Hardcoded stay_ids for consistency across all environments
+        # These 50 patients represent the 'Golden Cohort' for the demo
+        SELECTED_STAY_IDS = [
+            30537844, 30869173, 31012962, 31051881, 31255243, 31397640, 31414888, 31561455, 31656015, 31867131,
+            32270595, 32420044, 32663618, 32805896, 33171675, 33430774, 33621866, 33698582, 33902383, 33921453,
+            34081339, 34090532, 34265197, 34338856, 34558348, 34674321, 34745032, 34846812, 35159156, 35278638,
+            35421158, 35682113, 35742138, 35914249, 36059436, 36222449, 36240799, 36565779, 36780740, 37048740,
+            37410020, 37577996, 37624449, 37788731, 37884771, 38106426, 38388531, 38857376, 39608066, 39678590
+        ]
         
-        all_sepsis_stay_ids = labels[labels['label'] == 1]['stay_id'].unique()
-        sepsis_stay_ids = [sid for sid in all_sepsis_stay_ids if sid in longitudinal_stay_ids]
+        selected_stay_ids = [sid for sid in SELECTED_STAY_IDS if sid in labels['stay_id'].values]
+        print(f"[Seed] Seeding {len(selected_stay_ids)} selected patients.")
         
-        all_control_stay_ids = labels[~labels['stay_id'].isin(all_sepsis_stay_ids)]['stay_id'].unique()
-        control_stay_ids = [sid for sid in all_control_stay_ids if sid in longitudinal_stay_ids]
-
-        print(f"[Seed] Found {len(sepsis_stay_ids)} longitudinal sepsis patients and {len(control_stay_ids)} longitudinal control patients.")
-
-        sampled_sepsis = np.random.choice(sepsis_stay_ids, min(40, len(sepsis_stay_ids)), replace=False)
-        sampled_control = np.random.choice(control_stay_ids, min(10, len(control_stay_ids)), replace=False)
-        selected_stay_ids = np.concatenate([sampled_sepsis, sampled_control])
-        np.random.shuffle(selected_stay_ids)
+        cohort_sample = cohort[cohort['stay_id'].isin(selected_stay_ids)]
+        labels_sample = labels[labels['stay_id'].isin(selected_stay_ids)].copy()
+        vitals_sample = vitals[vitals['stay_id'].isin(selected_stay_ids)].copy()
+        labs_sample = labs_df[labs_df['stay_id'].isin(selected_stay_ids)].copy() if not labs_df.empty else pd.DataFrame()
 
         cohort_sample = cohort[cohort['stay_id'].isin(selected_stay_ids)]
         labels_sample = labels[labels['stay_id'].isin(selected_stay_ids)].copy()
@@ -351,6 +328,8 @@ def seed_data():
         )
         db.add_all([threshold_setting, sound_setting])
 
+        # ─── Finalise ───
+        _ensure_sim_patient(db)
         db.commit()
         print("[Seed] Database seeded successfully!")
         print(f"[Seed]   Users: 5 (1 admin, 2 doctors, 2 nurses)")
@@ -367,4 +346,22 @@ def seed_data():
         traceback.print_exc()
     finally:
         db.close()
+
+
+def _ensure_sim_patient(db):
+    """Ensure at least one simulation patient exists so the ward shows up."""
+    sim_patient = db.query(Patient).filter(Patient.ward_name == "Simulation Lab").first()
+    if not sim_patient:
+        sim_patient = Patient(
+            full_name="Simulated Patient (CASE 1 (SEP))",
+            age=64,
+            gender="male",
+            status="admitted",
+            bed_number="SIM-01",
+            ward_name="Simulation Lab",
+            diagnosis_notes="Seed simulation patient"
+        )
+        db.add(sim_patient)
+        db.commit()
+        print("[Seed] Created default simulation patient.")
 

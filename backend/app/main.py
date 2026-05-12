@@ -54,8 +54,10 @@ from app.api.tasks import router as tasks_router  # noqa: E402
 from app.api.labs import router as labs_router  # noqa: E402
 from app.api.documents import router as documents_router  # noqa: E402
 from app.api.simulation import router as simulation_router  # noqa: E402
+from app.api.public import router as public_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(public_router, prefix="/api/public", tags=["Public"])
 app.include_router(users_router, prefix="/api/users", tags=["Users"])
 app.include_router(patients_router, prefix="/api/patients", tags=["Patients"])
 app.include_router(vitals_router, prefix="/api/vitals", tags=["Vitals"])
