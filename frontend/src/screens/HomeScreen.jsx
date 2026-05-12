@@ -235,7 +235,7 @@ function MonitorCard() {
               <div className="w-2.5 h-2.5 rounded-full bg-slate-700" />
             </div>
             <span className="text-xs text-slate-500 font-medium">
-              SepsisAI — ICU Monitor
+              ARISE — ICU Monitor
             </span>
           </div>
           <div className="flex items-center gap-1.5 bg-rose-500/12 border border-rose-500/25 px-2.5 py-1 rounded-full">
@@ -370,7 +370,7 @@ export default function HomeScreen({ onNavigateLogin }) {
               <Activity size={14} className="text-white" strokeWidth={2.5} />
             </div>
             <span className="font-bold text-slate-100 tracking-tight">
-              SepsisAI
+              ARISE
             </span>
           </div>
           <div className="flex items-center gap-3">
@@ -762,7 +762,7 @@ export default function HomeScreen({ onNavigateLogin }) {
             <div className="w-6 h-6 bg-brand-600 rounded-md flex items-center justify-center">
               <Activity size={12} className="text-white" strokeWidth={2.5} />
             </div>
-            <span className="text-sm font-bold text-slate-500">SepsisAI</span>
+            <span className="text-sm font-bold text-slate-500">ARISE</span>
           </div>
           <div className="flex items-center gap-6 text-xs text-slate-700">
             <span>AI-Driven ICU Monitoring</span>

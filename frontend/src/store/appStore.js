@@ -56,6 +56,9 @@ export const useAppStore = create(
       // Auth
       user: null,
       token: null,
+      
+      // UI
+      isSimulationPanelOpen: false,
 
       // Data
       patients: [],
@@ -64,6 +67,8 @@ export const useAppStore = create(
       labs: {},
 
       // ── Auth ──────────────────────────────────────────────
+      setSimulationPanelOpen: (isOpen) => set({ isSimulationPanelOpen: isOpen }),
+      
       setAuth: (user, token) => {
         localStorage.setItem('sepsis_token', token);
         set({ user, token });
@@ -92,35 +97,24 @@ export const useAppStore = create(
       },
 
       // ── Fetch all ─────────────────────────────────────────
+      // Uses /api/patients/summary — one call returns patients+latest prediction+latest vital
       fetchAll: async () => {
         try {
-          const pRes = await authFetch(`${API_BASE}/patients/`);
-          if (!pRes.ok) return;
-          const pData = await pRes.json();
+          // Single batch call replaces N×2 individual prediction+vital calls
+          const sRes = await authFetch(`${API_BASE}/patients/summary`);
+          if (!sRes.ok) return;
+          const sData = await sRes.json();
 
-          const [predictions, vitalResults] = await Promise.all([
-            Promise.all(
-              pData.map(p =>
-                authFetch(`${API_BASE}/predictions/${p.patient_id}/latest`)
-                  .then(r => (r.ok ? r.json() : null))
-                  .catch(() => null)
-              )
-            ),
-            Promise.all(
-              pData.map(p =>
-                authFetch(`${API_BASE}/vitals/${p.patient_id}?hours=2`)
-                  .then(r => r.json())
-                  .then(d => (d.length ? d[d.length - 1] : null))
-                  .catch(() => null)
-              )
-            ),
-          ]);
-
-          const normalizedPatients = pData.map((p, i) =>
-            normPatient(p, predictions[i], vitalResults[i])
+          const normalizedPatients = sData.map(p =>
+            normPatient(p, p.latest_prediction, p.latest_vital)
           );
 
-          const aRes = await authFetch(`${API_BASE}/alerts/`);
+          const [aRes, tRes, lRes] = await Promise.all([
+            authFetch(`${API_BASE}/alerts/`),
+            authFetch(`${API_BASE}/tasks/`),
+            authFetch(`${API_BASE}/labs/`),
+          ]);
+
           const aData = aRes.ok ? await aRes.json() : [];
           const alerts = aData
             .filter(a => !a.is_read)
@@ -137,27 +131,27 @@ export const useAppStore = create(
               timestamp: a.created_at || new Date().toISOString(),
             }));
 
-          const tRes = await authFetch(`${API_BASE}/tasks/`);
           const tData = tRes.ok ? await tRes.json() : [];
-          const tasks = tData.map(t => ({
-            id: t.task_id ?? t.id,
-            patientId: t.patient_id,
-            patient:
-              normalizedPatients.find(p => p.id === t.patient_id)?.name ||
-              `Patient ${t.patient_id}`,
-            bed: normalizedPatients.find(p => p.id === t.patient_id)?.bed || '',
-            task: t.description,
-            time: t.scheduled_time || '',
-            type: t.task_type || 'assessment',
-            priority: t.priority || 'medium',
-            done: t.is_completed,
-          }));
+          const tasks = tData.map(t => {
+            const pid = Number(t.patient_id);
+            const pat = normalizedPatients.find(p => p.id === pid);
+            return {
+              id: t.task_id ?? t.id,
+              patientId: pid,
+              patient: pat?.name || `Patient ${t.patient_id}`,
+              bed: pat?.bed || '',
+              task: t.description,
+              time: t.scheduled_time || '',
+              type: t.task_type || 'assessment',
+              priority: t.priority || 'medium',
+              done: t.is_completed,
+            };
+          });
 
-          const lRes = await authFetch(`${API_BASE}/labs/`);
           const lData = lRes.ok ? await lRes.json() : [];
           const labsByPatient = {};
           lData.forEach(lab => {
-            const pid = lab.patient_id;
+            const pid = Number(lab.patient_id);
             if (!labsByPatient[pid]) labsByPatient[pid] = [];
             labsByPatient[pid].push({
               test: lab.test_name,
@@ -187,6 +181,33 @@ export const useAppStore = create(
       },
 
       // ── Task actions ───────────────────────────────────────
+      // Lightweight re-fetch of tasks only (used for 10s polling in NurseScreen
+      // so tasks created by doctors appear for nurses without a full reload).
+      refreshTasks: async () => {
+        const { patients } = get();
+        try {
+          const res = await authFetch(`${API_BASE}/tasks/`);
+          if (!res.ok) return;
+          const tData = await res.json();
+          const tasks = tData.map(t => {
+            const pid = Number(t.patient_id);
+            const pat = patients.find(p => p.id === pid);
+            return {
+              id: t.task_id ?? t.id,
+              patientId: pid,
+              patient: pat?.name || `Patient ${t.patient_id}`,
+              bed: pat?.bed || '',
+              task: t.description,
+              time: t.scheduled_time || '',
+              type: t.task_type || 'assessment',
+              priority: t.priority || 'medium',
+              done: t.is_completed,
+            };
+          });
+          set({ tasks });
+        } catch (_) {}
+      },
+
       toggleTask: async id => {
         const task = get().tasks.find(t => t.id === id);
         if (!task) return;
@@ -206,7 +227,7 @@ export const useAppStore = create(
         const res = await authFetch(`${API_BASE}/tasks/`, {
           method: 'POST',
           body: JSON.stringify({
-            patient_id: taskInput.patientId,
+            patient_id: String(taskInput.patientId),
             description: taskInput.task,
             scheduled_time: taskInput.time,
             task_type: taskInput.type,
@@ -215,13 +236,14 @@ export const useAppStore = create(
         }).catch(() => null);
         if (res?.ok) {
           const newTask = await res.json();
-          const patient = patients.find(p => p.id === taskInput.patientId);
+          const pid = Number(newTask.patient_id);
+          const patient = patients.find(p => p.id === pid);
           set(s => ({
             tasks: [
               ...s.tasks,
               {
                 id: newTask.task_id ?? newTask.id,
-                patientId: newTask.patient_id,
+                patientId: pid,
                 patient: patient?.name || `Patient ${newTask.patient_id}`,
                 bed: patient?.bed || '',
                 task: newTask.description,
@@ -237,7 +259,7 @@ export const useAppStore = create(
 
       // ── Lab actions ────────────────────────────────────────
       addLab: async labData => {
-        const pid = labData.patient_id;
+        const pid = Number(labData.patient_id);
         const newLab = {
           test: labData.test_name,
           value: labData.value,
@@ -253,7 +275,7 @@ export const useAppStore = create(
         }));
         await authFetch(`${API_BASE}/labs/`, {
           method: 'POST',
-          body: JSON.stringify(labData),
+          body: JSON.stringify({ ...labData, patient_id: String(labData.patient_id) }),
         }).catch(() => null);
       },
     }),

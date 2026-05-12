@@ -38,6 +38,59 @@ def list_patients(
     return get_patients_by_status(db, status_filter, doctor_id)
 
 
+@router.get("/summary")
+def get_patients_summary(
+    status_filter: str = "active",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns all patients with their latest prediction and latest vital embedded.
+    Replaces the N×2 individual calls in fetchAll with a single round-trip.
+    """
+    from app.services.prediction_service import get_latest_prediction
+    from app.models.vital_signs import VitalSign
+
+    doctor_id = current_user.user_id if current_user.role == "doctor" else None
+    patients = get_patients_by_status(db, status_filter, doctor_id)
+
+    result = []
+    for p in patients:
+        pid = p["patient_id"]
+
+        # Latest prediction
+        pred = get_latest_prediction(db, pid)
+        p["latest_prediction"] = {
+            "risk_score": pred.risk_score,
+            "risk_level": pred.risk_level,
+            "predicted_at": pred.predicted_at.isoformat() if pred else None,
+            "input_window_hours": pred.input_window_hours,
+            "model_version": pred.model_version,
+        } if pred else None
+
+        # Latest vital
+        vital = (
+            db.query(VitalSign)
+            .filter(VitalSign.patient_id == pid)
+            .order_by(VitalSign.recorded_at.desc())
+            .first()
+        )
+        p["latest_vital"] = {
+            "heart_rate": vital.heart_rate,
+            "respiratory_rate": vital.respiratory_rate,
+            "temperature": vital.temperature,
+            "spo2": vital.spo2,
+            "systolic_bp": vital.systolic_bp,
+            "diastolic_bp": vital.diastolic_bp,
+            "mean_bp": vital.mean_bp,
+            "recorded_at": vital.recorded_at.isoformat(),
+        } if vital else None
+
+        result.append(p)
+
+    return result
+
+
 @router.get("/{patient_id}", response_model=PatientResponse)
 def get_patient(
     patient_id: int,

@@ -71,18 +71,23 @@ app.include_router(simulation_router, prefix="/api/simulation", tags=["Simulatio
 # Startup event: create tables and seed data
 @app.on_event("startup")
 async def startup():
+    import asyncio
     from app.db.base import Base
-    from app.db.session import engine
+    from app.db.session import engine, SessionLocal
     from app.db.seed import seed_data
     import app.models  # noqa: F401 — import all models so tables are registered
 
     Base.metadata.create_all(bind=engine)
     seed_data()
-    
+
     # Load simulation data in background
     from app.services.simulation_service import simulation_service
     try:
         simulation_service.load_data()
     except Exception as e:
         print(f"[Simulation] Failed to load initial data: {e}")
+
+    # The background vital loop has been disabled so that non-simulation patients'
+    # real dataset values remain fixed and do not get overwritten with random noise.
+
 

@@ -5,7 +5,7 @@ import {
   HeartPulse, Thermometer, Wind, Upload, FileText,
   Heart, Droplets, Activity as ActIcon, User,
   Clock, Pill, Clipboard, CalendarClock, Syringe, ShieldAlert,
-  BedDouble, Eye,
+  BedDouble, Eye, X
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
@@ -48,12 +48,14 @@ const TABS = [
 ];
 
 export default function NurseScreen() {
-  const patients   = useAppStore(s => s.patients);
-  const tasks      = useAppStore(s => s.tasks);
-  const labs       = useAppStore(s => s.labs);
-  const alerts     = useAppStore(s => s.alerts);
-  const toggleTask = useAppStore(s => s.toggleTask);
-  const addLab     = useAppStore(s => s.addLab);
+  const patients      = useAppStore(s => s.patients);
+  const tasks         = useAppStore(s => s.tasks);
+  const labs          = useAppStore(s => s.labs);
+  const alerts        = useAppStore(s => s.alerts);
+  const toggleTask    = useAppStore(s => s.toggleTask);
+  const addLab        = useAppStore(s => s.addLab);
+  const refreshTasks  = useAppStore(s => s.refreshTasks);
+  const fetchAll      = useAppStore(s => s.fetchAll);
 
   const [activeTab, setActiveTab] = useState('monitor');
   const [selected, setSelected]   = useState(null);
@@ -61,6 +63,7 @@ export default function NurseScreen() {
   const [uploadPid, setUploadPid] = useState('');
   const [uploadProgress, setUploadProgress] = useState(null);
   const [extractedCount, setExtractedCount] = useState(0);
+  const [lastOcrResults, setLastOcrResults] = useState([]);  // results from last PDF/image upload
   const [labForm, setLabForm]     = useState({});
   const [manualPid, setManualPid] = useState('');
   const fileRef = useRef(null);
@@ -68,13 +71,22 @@ export default function NurseScreen() {
   const [selVitals, setSelVitals]   = useState([]);
   const [selTraj, setSelTraj]       = useState([]);
 
+  // Poll every 5 s so doctor-assigned tasks appear quickly on the nurse station.
+  // Use fetchAll (not just refreshTasks) so patients are always loaded first,
+  // preventing "Patient X" fallback names when tasks arrive before patient data.
+  useEffect(() => {
+    fetchAll();                               // immediate fetch on mount
+    const interval = setInterval(fetchAll, 5_000);
+    return () => clearInterval(interval);
+  }, [fetchAll]);
+
   useEffect(() => {
     if (!selected) return;
     setSelVitals([]); setSelTraj([]);
     authFetch(`${API_BASE}/vitals/${selected.id}`).then(r => r.json()).then(setSelVitals).catch(() => {});
-    authFetch(`${API_BASE}/predictions/${selected.id}?limit=24`).then(r => r.json()).then(data => {
-      setSelTraj([...data].reverse().map(p => ({
-        time: new Date(p.predicted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    authFetch(`${API_BASE}/predictions/${selected.id}?limit=100`).then(r => r.json()).then(data => {
+      setSelTraj([...data].reverse().map((p, i) => ({
+        time: selected.ward === 'Simulation Lab' ? `Hour ${i + 1}` : new Date(p.predicted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         value: Math.round(p.risk_score * 100),
       })));
     }).catch(() => {});
@@ -96,23 +108,82 @@ export default function NurseScreen() {
   const handleUpload = async e => {
     const file = e.target.files[0];
     if (!file) return;
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    const supported = ['pdf', 'png', 'jpg', 'jpeg', 'bmp', 'tiff', 'tif'];
+    if (!supported.includes(ext)) {
+      alert(`Unsupported file type ".${ext}". Please upload a PDF or image (PNG, JPG).`);
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
+
     setUploadProgress(0);
-    const iv = setInterval(() => setUploadProgress(p => p >= 90 ? p : p + Math.random() * 15), 300);
+    setExtractedCount(null);
+    const iv = setInterval(() => setUploadProgress(p => p >= 88 ? p : p + Math.random() * 12), 300);
+
+    // Hard 30-second timeout — prevents the UI from getting stuck when the
+    // backend OCR hangs (e.g. Tesseract not installed on the server).
+    const controller = new AbortController();
+    const timeoutId  = setTimeout(() => controller.abort(), 30_000);
+
     try {
       const token = localStorage.getItem('sepsis_token');
       const fd = new FormData();
-      fd.append('patient_id', uploadPid); fd.append('file', file);
-      const res = await fetch(`${API_BASE}/documents/upload`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
+      fd.append('patient_id', uploadPid);
+      fd.append('file', file);
+
+      const res = await fetch(`${API_BASE}/documents/upload`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
       if (res.ok) {
         const data = await res.json();
-        clearInterval(iv); setUploadProgress(100);
+        clearInterval(iv);
+        setUploadProgress(100);
         const extracted = data.extracted_labs || [];
         setExtractedCount(extracted.length);
-        extracted.forEach(lab => addLab({ patient_id: Number(uploadPid), test_name: lab.test_name, value: lab.value, unit: lab.unit, reference_range: lab.reference_range, status: lab.status }));
-      } else throw new Error();
-    } catch { clearInterval(iv); setUploadProgress(0); alert('Upload failed.'); }
+        extracted.forEach(lab =>
+          addLab({
+            patient_id: Number(uploadPid),
+            test_name: lab.test_name,
+            value: lab.value,
+            unit: lab.unit,
+            reference_range: lab.reference_range,
+            status: lab.status,
+          })
+        );
+        if (extracted.length === 0) {
+          alert(
+            'File uploaded successfully, but no lab values could be extracted.\n\n' +
+            'This usually means the file is a scanned image and Tesseract OCR is not ' +
+            'installed on the server. Please enter lab values manually below.'
+          );
+        }
+        // Store results so they are displayed in the UI
+        setLastOcrResults(extracted);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Server error ${res.status}`);
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      clearInterval(iv);
+      setUploadProgress(0);
+      if (err.name === 'AbortError') {
+        alert('Upload timed out after 30 seconds. The server may be busy — please try again or enter values manually.');
+      } else {
+        alert(`Upload failed: ${err.message}`);
+      }
+    }
+
     if (fileRef.current) fileRef.current.value = '';
   };
+
 
   const handleManualSubmit = () => {
     if (!manualPid) return;
@@ -186,10 +257,23 @@ export default function NurseScreen() {
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className={`w-1 h-8 rounded-full flex-shrink-0 ${p.riskLevel === 'critical' ? 'bg-rose-500' : p.riskLevel === 'high' ? 'bg-orange-500' : 'bg-emerald-500'}`} />
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 w-full">
                               <p className="text-sm font-medium text-slate-200 truncate">{p.name}</p>
                               {p.ward === 'Simulation Lab' && (
-                                <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[8px] px-1 py-0.5 rounded uppercase font-bold tracking-tighter">SIM</span>
+                                <>
+                                  <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[8px] px-1 py-0.5 rounded uppercase font-bold tracking-tighter">SIM</span>
+                                  <button 
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      await authFetch(`http://localhost:8000/api/simulation/clear?patient_id=${p.id}`, { method: 'DELETE' });
+                                      useAppStore.getState().fetchAll();
+                                    }}
+                                    className="ml-auto p-1 rounded hover:bg-rose-500/10 text-slate-500 hover:text-rose-400 transition-colors"
+                                    title="Remove Simulated Patient"
+                                  >
+                                    <X size={12} />
+                                  </button>
+                                </>
                               )}
                             </div>
                             <p className="text-[10px] text-slate-500">
@@ -202,8 +286,8 @@ export default function NurseScreen() {
                         <span className="text-xs text-slate-400">{p.bed}</span>
                         <RiskBadge level={p.riskLevel} score={p.sepsisScore} />
                         <span className={`text-xs font-mono ${hrAb ? 'text-rose-400 font-semibold' : 'text-slate-300'}`}>{v?.hr ?? '—'}</span>
-                        <span className={`text-xs font-mono ${spo2Ab ? 'text-rose-400 font-semibold' : 'text-slate-300'}`}>{v ? `${v.spo2}%` : '—'}</span>
-                        <span className={`text-xs font-mono ${tempAb ? 'text-rose-400 font-semibold' : 'text-slate-300'}`}>{v ? `${v.temp}°` : '—'}</span>
+                        <span className={`text-xs font-mono ${spo2Ab ? 'text-rose-400 font-semibold' : 'text-slate-300'}`}>{v?.spo2 != null ? `${v.spo2}%` : '—'}</span>
+                        <span className={`text-xs font-mono ${tempAb ? 'text-rose-400 font-semibold' : 'text-slate-300'}`}>{v?.temp != null ? `${v.temp}°` : '—'}</span>
                       </motion.div>
                     );
                   })}
@@ -457,6 +541,73 @@ export default function NurseScreen() {
                       </div>
                     )}
                   </div>
+
+                  {/* ── OCR Results Table ─────────────────────────────── */}
+                  {uploadProgress >= 100 && lastOcrResults.length > 0 && (
+                    <div className="mt-4">
+                      {/* Data flow info banner */}
+                      <div className="flex items-start gap-3 mb-3 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                        <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 flex-shrink-0" />
+                        <div className="text-xs text-indigo-300 leading-relaxed">
+                          <span className="font-semibold text-indigo-200">Where do these results go?</span>
+                          <span className="text-indigo-400"> &nbsp;·&nbsp; </span>
+                          Saved to the <span className="font-medium text-slate-200">Lab Results database</span>
+                          {' → '} visible on the <span className="font-medium text-slate-200">Physician &rsaquo; Lab Results tab</span>
+                          {' → '} injected into the <span className="font-medium text-slate-200">DST model</span> at next prediction
+                          {' → '} shown as <span className="font-medium text-slate-200">Abnormal Labs</span> in Unit Monitor.
+                        </div>
+                      </div>
+
+                      {/* Results table */}
+                      <div className="rounded-xl border border-slate-800 overflow-hidden">
+                        <div className="bg-slate-800/60 px-4 py-2 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                            Extracted Lab Results
+                          </span>
+                          <span className="text-xs text-slate-500">{lastOcrResults.length} values</span>
+                        </div>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-800">
+                              {['Test', 'Result', 'Reference Range', 'Status'].map(h => (
+                                <th key={h} className="px-4 py-2 text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {lastOcrResults.map((lab, i) => {
+                              const statusColor =
+                                lab.status === 'critical' ? 'text-rose-400 bg-rose-500/10 border-rose-500/20' :
+                                lab.status === 'high'     ? 'text-orange-400 bg-orange-500/10 border-orange-500/20' :
+                                lab.status === 'low'      ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20' :
+                                'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+                              return (
+                                <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/20 transition-colors">
+                                  <td className="px-4 py-2.5 font-medium text-slate-200">{lab.test_name}</td>
+                                  <td className="px-4 py-2.5 font-mono text-slate-100">
+                                    {lab.value} <span className="text-slate-500 text-xs">{lab.unit}</span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-slate-500 text-xs">{lab.reference_range}</td>
+                                  <td className="px-4 py-2.5">
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusColor}`}>
+                                      {lab.status.toUpperCase()}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {uploadProgress >= 100 && lastOcrResults.length === 0 && (
+                    <div className="mt-3 p-3 bg-slate-800/40 border border-slate-700 rounded-xl text-center">
+                      <p className="text-xs text-slate-400">No lab values could be extracted from this file.</p>
+                      <p className="text-[10px] text-slate-600 mt-1">Try the Manual Entry tab to enter values directly.</p>
+                    </div>
+                  )}
                 </CardBody>
               </Card>
             )}

@@ -96,9 +96,10 @@ def seed_data():
 
         print(f"[Seed] Found {len(sepsis_stay_ids)} longitudinal sepsis patients and {len(control_stay_ids)} longitudinal control patients.")
 
-        sampled_sepsis = np.random.choice(sepsis_stay_ids, min(25, len(sepsis_stay_ids)), replace=False)
-        sampled_control = np.random.choice(control_stay_ids, min(25, len(control_stay_ids)), replace=False)
+        sampled_sepsis = np.random.choice(sepsis_stay_ids, min(40, len(sepsis_stay_ids)), replace=False)
+        sampled_control = np.random.choice(control_stay_ids, min(10, len(control_stay_ids)), replace=False)
         selected_stay_ids = np.concatenate([sampled_sepsis, sampled_control])
+        np.random.shuffle(selected_stay_ids)
 
         cohort_sample = cohort[cohort['stay_id'].isin(selected_stay_ids)]
         labels_sample = labels[labels['stay_id'].isin(selected_stay_ids)].copy()
@@ -178,28 +179,31 @@ def seed_data():
             p_labels = labels_sample[labels_sample['stay_id'] == p._stay_id]
             p_vitals = vitals_sample[vitals_sample['stay_id'] == p._stay_id]
             
-            # Map hour to shifted_time
-            hour_to_time = dict(zip(p_labels['hour'], p_labels['shifted_time']))
+            p_vitals = p_vitals.sort_values('hour').ffill().bfill()
             
             for _, v_row in p_vitals.iterrows():
                 hour = v_row['hour']
-                if hour not in hour_to_time:
-                    continue
+                v_time = p.admission_time + timedelta(hours=float(hour))
                 
-                v_time = hour_to_time[hour]
-                if pd.isna(v_time):
-                    continue
+                def parse_val(val):
+                    if pd.isna(val): return None
+                    try:
+                        f = float(val)
+                        if np.isnan(f): return None
+                        return round(f, 1)
+                    except:
+                        return None
                     
                 vital = VitalSign(
                     patient_id=p.patient_id,
                     recorded_at=v_time.to_pydatetime(),
-                    heart_rate=float(v_row['heart_rate']) if not pd.isna(v_row['heart_rate']) else None,
-                    respiratory_rate=float(v_row['resp_rate']) if not pd.isna(v_row['resp_rate']) else None,
-                    temperature=float(v_row['temp_c']) if not pd.isna(v_row['temp_c']) else None,
-                    spo2=float(v_row['spo2']) if not pd.isna(v_row['spo2']) else None,
-                    systolic_bp=float(v_row['abp_sys']) if not pd.isna(v_row['abp_sys']) else None,
-                    diastolic_bp=float(v_row['abp_dia']) if not pd.isna(v_row['abp_dia']) else None,
-                    mean_bp=float(v_row['abp_mean']) if not pd.isna(v_row['abp_mean']) else None,
+                    heart_rate=parse_val(v_row['heart_rate']),
+                    respiratory_rate=parse_val(v_row['resp_rate']),
+                    temperature=parse_val(v_row['temp_c']),
+                    spo2=parse_val(v_row['spo2']),
+                    systolic_bp=parse_val(v_row['abp_sys']),
+                    diastolic_bp=parse_val(v_row['abp_dia']),
+                    mean_bp=parse_val(v_row['abp_mean']),
                     source="monitor",
                 )
                 vital_objects.append(vital)
@@ -277,13 +281,11 @@ def seed_data():
                 if pd.isna(l_row['shifted_time']):
                     continue
                     
-                # We'll simulate a risk score based on the true label. 
-                # If label=1, score is high.
-                label = l_row['label']
-                if label == 1:
-                    risk_score = random.uniform(0.8, 0.99)
+                is_sepsis_patient = p._stay_id in sepsis_stay_ids
+                if is_sepsis_patient:
+                    risk_score = random.uniform(0.85, 0.99)
                 else:
-                    risk_score = random.uniform(0.1, 0.79)
+                    risk_score = random.uniform(0.1, 0.45)
                     
                 risk_level = "critical" if risk_score >= 0.9 else "high" if risk_score >= 0.8 else "medium" if risk_score >= 0.48 else "low"
                 
