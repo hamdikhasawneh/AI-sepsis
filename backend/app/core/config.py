@@ -1,6 +1,10 @@
 from __future__ import annotations
 import os
-from pydantic_settings import BaseSettings
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    from pydantic import BaseSettings
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,15 +23,35 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
 
     # App
-    APP_NAME: str = "ICU Sepsis Detection System"
+    APP_NAME: str = "ARISE"
     DEBUG: bool = os.getenv("DEBUG", "true").lower() == "true"
 
-    # CORS
-    _CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
-    
+    # OCR — Gemini Vision API (for scanned lab report PDFs and images)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+    # CORS — read directly from env to avoid pydantic-settings field conflicts.
+    # Supports comma-separated list. Includes both 5173 and 5174 so Vite port
+    # fallback never breaks the connection.
     @property
     def CORS_ORIGINS(self) -> list[str]:
-        return [o.strip() for o in self._CORS_ORIGINS.split(",")]
+        raw = os.getenv(
+            "CORS_ORIGINS",
+            "*"
+        )
+        if raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
+    # Simulation
+    # Default path is repo-relative: backend/data/simulation/DST_Simulation_v5.xlsx
+    # Override via SIMULATION_EXCEL_PATH env var for alternative locations.
+    SIMULATION_EXCEL_PATH: str = os.getenv(
+        "SIMULATION_EXCEL_PATH",
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # backend/
+            "data", "simulation", "DST_Simulation_v5.xlsx"
+        )
+    )
 
     class Config:
         env_file = ".env"
