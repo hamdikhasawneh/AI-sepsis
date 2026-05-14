@@ -15,10 +15,12 @@ from app.models.system_setting import SystemSetting
 # Optional: torch and transformer are only needed when the .pt model file is present
 try:
     import torch
+    from captum.attr import GradientShap
     from app.models.transformer_arch import DynamicSurvivalTransformer
     _TORCH_AVAILABLE = True
 except ImportError:
     torch = None  # type: ignore
+    GradientShap = None  # type: ignore
     DynamicSurvivalTransformer = None  # type: ignore
     _TORCH_AVAILABLE = False
 
@@ -35,6 +37,8 @@ STATIC_WINSOR_HI_PATH= "app/models/ml_files/dst_winsor_hi.npy"
 SHAP_VALUES_PATH     = "app/models/ml_files/dst_shap_values.npy"
 SHAP_STAY_IDS_PATH   = "app/models/ml_files/dst_shap_stay_ids.npy"
 FEATURE_COLS_PATH    = "app/models/ml_files/dst_feature_cols.txt"
+SHAP_BG_SEQ_PATH     = "app/models/ml_files/dst_shap_bg_padded.pt"
+SHAP_BG_STATIC_PATH  = "app/models/ml_files/dst_shap_bg_static.pt"
 
 NUM_BINS   = 48
 MAX_HOURS  = 200
@@ -93,6 +97,29 @@ def apply_platt_calibration(surv: np.ndarray, calibrators: dict, num_bins: int =
     return surv_cal
 
 
+if _TORCH_AVAILABLE and torch is not None:
+    class SHAPWrapper(torch.nn.Module):
+        """
+        Wraps the DST model to output the 12h horizon Risk Score (CIF).
+        Captum attributes the inputs (seq, static) to this single scalar.
+        """
+        def __init__(self, model, lengths):
+            super().__init__()
+            self.model = model
+            self.lengths = lengths
+
+        def forward(self, x_seq, x_static):
+            # Forward pass: returns PMF over bins
+            pmf = self.model(x_seq, x_static, self.lengths)
+            # Cumulative Sum to get CIF (Risk)
+            cif = torch.cumsum(pmf, dim=1)
+            # Target the 12h bin score
+            return cif[:, BIN_12H]
+else:
+    class SHAPWrapper:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+
+
 class BasePredictorService(ABC):
     @abstractmethod
     def predict(self, vitals_window: list[dict], patient_static: dict = None) -> float:
@@ -116,6 +143,8 @@ class DSTPredictorService(BasePredictorService):
         self.vital_hi = None
         self.static_lo = None
         self.static_hi = None
+        self.bg_seq = None
+        self.bg_static = None
         self.load_model()
 
     def load_model(self):
@@ -162,6 +191,12 @@ class DSTPredictorService(BasePredictorService):
                 self.static_lo = np.load(STATIC_WINSOR_LO_PATH)
                 self.static_hi = np.load(STATIC_WINSOR_HI_PATH)
                 logger.info("Static winsorisation bounds loaded.")
+
+            # Load SHAP baselines for live attribution
+            if os.path.exists(SHAP_BG_SEQ_PATH) and os.path.exists(SHAP_BG_STATIC_PATH):
+                self.bg_seq = torch.load(SHAP_BG_SEQ_PATH, map_location=self.device, weights_only=True)
+                self.bg_static = torch.load(SHAP_BG_STATIC_PATH, map_location=self.device, weights_only=True)
+                logger.info("SHAP baseline tensors loaded for live attribution.")
 
         except Exception as e:
             logger.error(f"Error loading DST v2 model: {e}")
@@ -351,6 +386,110 @@ class DSTPredictorService(BasePredictorService):
             logger.error(f"DST inference error: {e}")
             return MockPredictorService().predict(vitals_window)
 
+    def compute_live_shap(self, vitals_window: list[dict], patient_static: dict = None) -> list[dict]:
+        """
+        Compute GradientSHAP feature attribution for a patient snapshot.
+        """
+        if self.model is None or GradientShap is None or self.bg_seq is None:
+            return []
+
+        try:
+            # Prepare input (last 12h)
+            WINDOW = 12
+            if len(vitals_window) >= WINDOW:
+                windowed = vitals_window[-WINDOW:]
+            else:
+                pad_row = vitals_window[-1]
+                padding = [pad_row] * (WINDOW - len(vitals_window))
+                windowed = padding + list(vitals_window)
+
+            seq     = self._preprocess_vitals(windowed)
+            static  = self._preprocess_static(patient_static or {})
+            T       = len(seq)
+
+            x_seq    = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).to(self.device)
+            x_static = torch.tensor(static, dtype=torch.float32).to(self.device)
+            lengths  = torch.tensor([T], dtype=torch.long).to(self.device)
+
+            # Wrapper for Captum
+            wrapper = SHAPWrapper(self.model, lengths)
+            gs = GradientShap(wrapper)
+
+            # Match baseline window to input window (12h)
+            bg_seq_subset = self.bg_seq[:, :T, :].to(self.device)
+            bg_static_subset = self.bg_static.to(self.device)
+
+            # Compute attribution
+            # We attribute the 12h risk score to the static feature vector (aggregates)
+            # as it contains the most interpretable features (means, slopes of vitals)
+            attr_seq, attr_static = gs.attribute(
+                (x_seq, x_static),
+                baselines=(bg_seq_subset, bg_static_subset),
+                n_samples=50,
+                stdevs=0.1
+            )
+
+            sv = attr_static.squeeze(0).detach().cpu().numpy()
+
+            # Load feature names
+            feature_cols = []
+            if os.path.exists(FEATURE_COLS_PATH):
+                with open(FEATURE_COLS_PATH) as f:
+                    feature_cols = f.read().splitlines()
+            else:
+                feature_cols = [f"feature_{i}" for i in range(len(sv))]
+
+            # Group features and sum their SHAP values
+            display_map = {
+                "heart_rate": "Heart Rate",
+                "resp_rate":  "Respiratory Rate",
+                "spo2":       "SpO2",
+                "temp_c":     "Temperature",
+                "abp_sys":    "Systolic BP",
+                "abp_dia":    "Diastolic BP",
+                "abp_mean":   "Mean BP",
+                "lactate":    "Lactate",
+                "wbc":        "WBC",
+                "crp":        "CRP",
+                "platelets":  "Platelets",
+                "inr":        "INR",
+                "sofa":       "SOFA Score",
+                "uo_":        "Urine Output",
+                "anchor_age": "Patient Age",
+                "gender_male":"Gender",
+                "ventilated": "Mechanical Ventilation",
+                "vasopressor":"Vasopressors",
+                "blood_culture": "Blood Culture",
+            }
+
+            grouped_sv = {}
+            for i, name in enumerate(feature_cols):
+                found = False
+                for key, display in display_map.items():
+                    if key in name:
+                        grouped_sv[display] = grouped_sv.get(display, 0.0) + sv[i]
+                        found = True
+                        break
+                if not found:
+                    grouped_sv["Other Features"] = grouped_sv.get("Other Features", 0.0) + sv[i]
+
+            # Top 8 by absolute value
+            sorted_items = sorted(grouped_sv.items(), key=lambda x: abs(x[1]), reverse=True)[:8]
+            
+            features = []
+            for name, val in sorted_items:
+                features.append({
+                    "feature": name,
+                    "shap_value": round(float(val), 5),
+                    "direction": "Risk +" if val > 0 else "Protective",
+                })
+
+            return features
+
+        except Exception as e:
+            logger.error(f"Live SHAP computation error: {e}")
+            return []
+
 
 class MockPredictorService(BasePredictorService):
     """Mock prediction service for demo/testing when model files are absent."""
@@ -506,6 +645,27 @@ def run_prediction_for_patient(db: Session, patient_id: int) -> Prediction | Non
     db.add(prediction)
     db.commit()
     db.refresh(prediction)
+
+    # ── NEW: Trigger live SHAP attribution ────────────────────────
+    # Since this is usually called within a BackgroundTask, we can run it
+    # synchronously here as it's already in a background thread.
+    if isinstance(predictor, DSTPredictorService):
+        try:
+            from app.models.shap_result import PatientShapResult
+            shap_values = predictor.compute_live_shap(vitals_window, patient_static)
+            if shap_values:
+                shap_res = PatientShapResult(
+                    patient_id=patient_id,
+                    prediction_id=prediction.prediction_id,
+                    shap_values=shap_values,
+                    model_version=version
+                )
+                db.add(shap_res)
+                db.commit()
+                logger.info(f"Live SHAP computed for patient {patient_id}")
+        except Exception as e:
+            logger.error(f"Failed to compute/save live SHAP: {e}")
+
     return prediction
 
 
@@ -530,12 +690,28 @@ def get_latest_prediction(db: Session, patient_id: int) -> Prediction | None:
 
 # ── SHAP lookup for UI ────────────────────────────────────────
 
-def get_shap_for_patient(patient_id: int) -> dict | None:
+def get_shap_for_patient(db: Session, patient_id: int) -> dict | None:
     """
-    Look up precomputed GradientSHAP values for a patient.
-    Returns top 8 features with their SHAP values and direction.
+    Look up GradientSHAP values for a patient.
+    Prioritizes live computed values from the DB, falls back to precomputed lookup.
     """
+    from app.models.shap_result import PatientShapResult
     try:
+        # 1. Try DB first (Live Attribution)
+        live_result = (
+            db.query(PatientShapResult)
+            .filter(PatientShapResult.patient_id == patient_id)
+            .order_by(PatientShapResult.created_at.desc())
+            .first()
+        )
+        if live_result:
+            return {
+                "patient_id": int(patient_id),
+                "features": live_result.shap_values,
+                "type": "live"
+            }
+
+        # 2. Fallback to precomputed files
         if not os.path.exists(SHAP_VALUES_PATH):
             return None
 
@@ -567,6 +743,7 @@ def get_shap_for_patient(patient_id: int) -> dict | None:
         return {
             "patient_id": int(patient_id),
             "features"  : features,
+            "type": "precomputed"
         }
 
     except Exception as e:

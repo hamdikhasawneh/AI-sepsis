@@ -8,7 +8,7 @@ from app.db.session import SessionLocal
 from app.models.patient import Patient
 from app.models.vital_signs import VitalSign
 from app.models.lab_result import LabResult
-from app.services.prediction_service import run_prediction_for_patient
+from app.services.prediction_service import run_prediction_for_patient, DSTPredictorService
 from app.services.alert_service import check_and_create_alert
 from app.core.websocket import manager
 
@@ -279,6 +279,29 @@ class SimulationService:
                 db.add(prediction)
                 db.commit()
                 db.refresh(prediction)
+
+                # 6. Trigger live SHAP attribution in the background
+                if isinstance(predictor, DSTPredictorService):
+                    from app.models.shap_result import PatientShapResult
+                    def _compute_shap_bg(pid, pred_id, window, static):
+                        # Create a fresh DB session for the background thread
+                        from app.db.session import SessionLocal
+                        bg_db = SessionLocal()
+                        try:
+                            sv = predictor.compute_live_shap(window, static)
+                            if sv:
+                                res = PatientShapResult(
+                                    patient_id=pid,
+                                    prediction_id=pred_id,
+                                    shap_values=sv,
+                                    model_version="Dynamic Survival Transformer v2"
+                                )
+                                bg_db.add(res)
+                                bg_db.commit()
+                        finally:
+                            bg_db.close()
+
+                    asyncio.create_task(asyncio.to_thread(_compute_shap_bg, self.patient_id, prediction.prediction_id, vitals_window, static_dict))
 
                 check_and_create_alert(db, prediction)
 

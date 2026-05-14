@@ -18,6 +18,18 @@ class PredictionResponse(BaseModel):
         from_attributes = True
 
 
+class ShapFeature(BaseModel):
+    feature: str
+    shap_value: float
+    direction: str
+
+
+class ShapResponse(BaseModel):
+    patient_id: int
+    features: list[ShapFeature]
+    message: str | None = None
+
+
 class AlertResponse(BaseModel):
     alert_id: int
     prediction_id: int | None = None

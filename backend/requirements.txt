@@ -16,17 +16,10 @@ pytesseract==0.3.13
 google-genai==0.1.0
 Pillow==10.4.0
 torch==2.5.1
-<<<<<<< HEAD
-numpy>=2.0
-pandas>=2.2.0
-joblib>=1.4.0
-scikit-learn>=1.5.0
-shap==0.51.0
-=======
 numpy==1.26.4
 pandas==2.2.2
 joblib==1.4.2
 scikit-learn==1.5.0
 shap==0.47.2
->>>>>>> b9d9960d32cbcac8602411a71d573dc33e79413a
+captum==0.7.0
 gunicorn==23.0.0

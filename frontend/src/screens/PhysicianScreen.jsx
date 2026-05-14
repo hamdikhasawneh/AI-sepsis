@@ -5,7 +5,7 @@ import {
   TrendingUp, Brain, Users, Plus, Clock, Clipboard, CheckCircle2, AlertTriangle, X
 } from 'lucide-react';
 import {
-  AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  AreaChart, Area, BarChart, Bar, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import { useAppStore, authFetch } from '../store/appStore';
@@ -462,24 +462,71 @@ export default function PhysicianScreen() {
                           </div>
                         </div>
                         <CardBody className="space-y-3">
-                          {shapData.map((item, i) => {
-                            const w = Math.min(Math.abs(item.impact) * 500, 45);
-                            return (
-                              <div key={i} className="flex items-center gap-3">
-                                <span className="text-xs text-slate-400 w-36 flex-shrink-0 truncate">{item.feature}</span>
-                                <div className="flex-1 flex items-center justify-center relative h-4">
-                                  <div className="absolute inset-x-0 top-1/2 h-px bg-slate-800" />
-                                  <div
-                                    className={`absolute top-0 h-4 rounded ${item.direction === 'increase' ? 'left-1/2 bg-rose-500/70' : 'right-1/2 bg-emerald-500/70'}`}
-                                    style={{ width: `${w}%` }}
+                          {selected.ward === 'Simulation Lab' ? (
+                            /* New Dynamic BarChart for Simulation Patients */
+                            <div className="h-[300px] w-full pt-2">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  data={shapData}
+                                  layout="vertical"
+                                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                                >
+                                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(255,255,255,0.05)" />
+                                  <XAxis 
+                                    type="number" 
+                                    hide 
+                                    domain={['dataMin', 'dataMax']} 
                                   />
+                                  <YAxis 
+                                    dataKey="feature" 
+                                    type="category" 
+                                    width={100}
+                                    tick={{ fontSize: 10, fill: '#94a3b8' }}
+                                    axisLine={false}
+                                    tickLine={false}
+                                  />
+                                  <Tooltip 
+                                    content={<ChartTooltip />} 
+                                    cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                  />
+                                  <Bar 
+                                    dataKey="impact" 
+                                    radius={[0, 4, 4, 0]}
+                                    animationDuration={1000}
+                                    barSize={20}
+                                  >
+                                    {shapData.map((entry, index) => (
+                                      <Cell 
+                                        key={`cell-${index}`} 
+                                        fill={entry.direction === 'increase' ? '#F43F5E' : '#10B981'} 
+                                        fillOpacity={0.8}
+                                      />
+                                    ))}
+                                  </Bar>
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          ) : (
+                            /* Legacy Manual Bars for Regular Patients */
+                            shapData.map((item, i) => {
+                              const w = Math.min(Math.abs(item.impact) * 500, 45);
+                              return (
+                                <div key={i} className="flex items-center gap-3">
+                                  <span className="text-xs text-slate-400 w-36 flex-shrink-0 truncate">{item.feature}</span>
+                                  <div className="flex-1 flex items-center justify-center relative h-4">
+                                    <div className="absolute inset-x-0 top-1/2 h-px bg-slate-800" />
+                                    <div
+                                      className={`absolute top-0 h-4 rounded ${item.direction === 'increase' ? 'left-1/2 bg-rose-500/70' : 'right-1/2 bg-emerald-500/70'}`}
+                                      style={{ width: `${w}%` }}
+                                    />
+                                  </div>
+                                  <span className={`text-xs font-mono w-14 text-right ${item.direction === 'increase' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                    {item.direction === 'increase' ? '+' : '−'}{(item.impact * 100).toFixed(1)}%
+                                  </span>
                                 </div>
-                                <span className={`text-xs font-mono w-14 text-right ${item.direction === 'increase' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                  {item.direction === 'increase' ? '+' : '−'}{(item.impact * 100).toFixed(1)}%
-                                </span>
-                              </div>
-                            );
-                          })}
+                              );
+                            })
+                          )}
                         </CardBody>
                       </Card>
                     )}

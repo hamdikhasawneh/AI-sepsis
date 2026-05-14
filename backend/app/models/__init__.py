@@ -8,3 +8,4 @@ from app.models.system_setting import SystemSetting  # noqa: F401
 from app.models.task import Task  # noqa: F401
 from app.models.lab_result import LabResult  # noqa: F401
 from app.models.document import Document  # noqa: F401
+from app.models.shap_result import PatientShapResult  # noqa: F401

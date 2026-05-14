@@ -42,7 +42,7 @@ def get_patient_shap(
     Get GradientSHAP feature importance for a patient.
     Returns top 8 features with SHAP values for the AI Reasoning tab in the UI.
     """
-    result = get_shap_for_patient(patient_id)
+    result = get_shap_for_patient(db, patient_id)
     if result is None:
         return {
             "patient_id": patient_id,
